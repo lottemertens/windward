@@ -77,7 +77,7 @@ async def geocode(q: str):
     async with httpx.AsyncClient() as client:
         res = await client.get(
             "https://nominatim.openstreetmap.org/search",
-            params={"q": q, "format": "json", "limit": 5, "addressdetails": 0},
+            params={"q": q, "format": "json", "limit": 5, "addressdetails": 0, "countrycodes": "nl"},
             headers={"User-Agent": "Windward/1.0 (cycling wind planner)"},
             timeout=5.0,
         )
