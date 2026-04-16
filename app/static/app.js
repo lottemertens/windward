@@ -1,0 +1,582 @@
+// ── Map setup ─────────────────────────────────────────────────────────
+const map = L.map('map').setView([52.3, 5.3], 8);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  maxZoom: 19,
+}).addTo(map);
+
+
+// ── DOM references ────────────────────────────────────────────────────
+const datetimeInput  = document.getElementById('datetime-input');
+const windCompass    = document.getElementById('wind-compass');
+const windLabel      = document.getElementById('wind-label');
+const windDateNote   = document.getElementById('wind-date-note');
+const instructions   = document.getElementById('instructions');
+const calculateBtn   = document.getElementById('calculate-btn');
+const undoBtn        = document.getElementById('undo-btn');
+const resetBtn       = document.getElementById('reset-btn');
+const statusDiv      = document.getElementById('status');
+const summaryCard    = document.getElementById('summary-card');
+const loadingOverlay = document.getElementById('loading-overlay');
+const routeInfo      = document.getElementById('route-info');
+
+// Upload tab
+const tabPlan    = document.getElementById('tab-plan');
+const tabUpload  = document.getElementById('tab-upload');
+const panelPlan  = document.getElementById('panel-plan');
+const panelUpload = document.getElementById('panel-upload');
+const gpxInput   = document.getElementById('gpx-input');
+const fileNameEl = document.getElementById('file-name');
+const uploadBtn  = document.getElementById('upload-btn');
+const windBtn    = document.getElementById('wind-btn');
+const exportBtn  = document.getElementById('export-btn');
+
+
+// ── App state ─────────────────────────────────────────────────────────
+// planPoints holds all clicked points in order: [start, ...via, end]
+// Each entry: { lat, lng, marker, addedAt }
+// addedAt is a monotonic counter used by undo to find the most recently added point.
+let planPoints        = [];
+let pointCounter      = 0;
+let routeLayers       = [];
+let arrowLayers       = [];
+let uploadedWaypoints = null;   // set when a GPX is loaded
+let lastRouteSegments = [];     // stored after each calculation, used for GPX export
+
+// Default datetime to current time rounded to the nearest hour
+const now = new Date();
+now.setMinutes(0, 0, 0);
+datetimeInput.value = now.toISOString().slice(0, 16);
+
+
+// ── Colour scale ──────────────────────────────────────────────────────
+const HEADWIND_SCALE = 5.0;
+
+function windColour(headwindMs) {
+  const t = Math.max(-1, Math.min(1, headwindMs / HEADWIND_SCALE));
+  if (t <= 0) return `rgb(${Math.round(255 * (t + 1))}, 200, 0)`;
+  return `rgb(255, ${Math.round(200 * (1 - t))}, 0)`;
+}
+
+
+// ── Wind overview ─────────────────────────────────────────────────────
+async function fetchWindOverview() {
+  const datetime = datetimeInput.value + ':00';
+  windLabel.innerHTML = 'Loading…';
+  windDateNote.textContent = '';
+
+  if (new Date(datetimeInput.value) < new Date()) {
+    windDateNote.textContent = 'Showing historical wind data.';
+  }
+
+  try {
+    const res  = await fetch(`/api/wind?datetime_iso=${encodeURIComponent(datetime)}`);
+    if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
+    renderWindWidget(await res.json());
+  } catch (err) {
+    windCompass.innerHTML = '';
+    windLabel.textContent = err.message;
+  }
+}
+
+function renderWindWidget(data) {
+  const arrowTo = (data.direction_deg + 180) % 360;
+  windCompass.innerHTML = `
+    <svg width="48" height="48" viewBox="0 0 48 48">
+      <polygon points="24,4 38,42 24,32 10,42"
+               fill="white" stroke="#334155" stroke-width="2.5" stroke-linejoin="round"
+               transform="rotate(${arrowTo}, 24, 24)"/>
+    </svg>`;
+  windLabel.innerHTML = `
+    <strong>${data.speed_ms} m/s</strong>
+    from ${degreesToCompass(data.direction_deg)}<br>
+    <span style="font-size:0.75rem;color:#94a3b8">${data.location}</span>`;
+}
+
+function degreesToCompass(deg) {
+  const d = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return d[Math.round(deg / 22.5) % 16];
+}
+
+fetchWindOverview();
+datetimeInput.addEventListener('change', fetchWindOverview);
+
+
+// ── Tab switching ─────────────────────────────────────────────────────
+tabPlan.addEventListener('click', () => {
+  tabPlan.classList.add('active');
+  tabUpload.classList.remove('active');
+  panelPlan.classList.remove('hidden');
+  panelUpload.classList.add('hidden');
+});
+
+tabUpload.addEventListener('click', () => {
+  tabUpload.classList.add('active');
+  tabPlan.classList.remove('active');
+  panelUpload.classList.remove('hidden');
+  panelPlan.classList.add('hidden');
+});
+
+
+// ── Plan tab: map click → add waypoint ───────────────────────────────
+map.on('click', (e) => {
+  if (panelPlan.classList.contains('hidden')) return; // upload tab is active, ignore map clicks
+  const { lat, lng } = e.latlng;
+
+  if (planPoints.length === 0) {
+    // First click: start
+    const marker = makePlanMarker(lat, lng, 'start');
+    planPoints.push({ lat, lng, marker, addedAt: pointCounter++ });
+    refreshMarkerLabels();
+    updateInstructions();
+    updateUndoBtn();
+
+  } else if (planPoints.length === 1) {
+    // Second click: end — add and auto-calculate
+    const marker = makePlanMarker(lat, lng, 'end');
+    planPoints.push({ lat, lng, marker, addedAt: pointCounter++ });
+    refreshMarkerLabels();
+    calculateBtn.disabled = false;
+    updateInstructions();
+    updateUndoBtn();
+    calculateOrsRoute();
+
+  } else {
+    // Third+ click: via point — insert into the nearest segment
+    const insertIdx = nearestSegmentIndex({ lat, lng }) + 1;
+    const marker = makePlanMarker(lat, lng, 'via');
+    planPoints.splice(insertIdx, 0, { lat, lng, marker, addedAt: pointCounter++ });
+    refreshMarkerLabels();
+    updateUndoBtn();
+    calculateOrsRoute();
+  }
+});
+
+// ── Nearest-segment geometry ──────────────────────────────────────────
+
+/**
+ * Squared distance from point p to the line segment a→b, in lat/lng space
+ * corrected for longitude compression at the current latitude.
+ * Returns a value only meaningful for comparison, not as a real distance.
+ */
+function distToSegmentSq(p, a, b) {
+  const cosLat = Math.cos(p.lat * Math.PI / 180);
+  const dx = b.lat - a.lat;
+  const dy = (b.lng - a.lng) * cosLat;
+  const lenSq = dx * dx + dy * dy;
+  let t = lenSq > 0
+    ? ((p.lat - a.lat) * dx + (p.lng - a.lng) * cosLat * dy) / lenSq
+    : 0;
+  t = Math.max(0, Math.min(1, t));
+  const dLat = p.lat - (a.lat + t * (b.lat - a.lat));
+  const dLng = (p.lng - (a.lng + t * (b.lng - a.lng))) * cosLat;
+  return dLat * dLat + dLng * dLng;
+}
+
+/**
+ * Return the index i of the planPoints segment (i → i+1) that is closest
+ * to the clicked point. A new via point should be inserted at i+1.
+ */
+function nearestSegmentIndex(p) {
+  let bestIdx  = planPoints.length - 2;  // fallback: just before end
+  let bestDist = Infinity;
+  for (let i = 0; i < planPoints.length - 1; i++) {
+    const d = distToSegmentSq(p, planPoints[i], planPoints[i + 1]);
+    if (d < bestDist) { bestDist = d; bestIdx = i; }
+  }
+  return bestIdx;
+}
+
+/** Build a divIcon for a plan waypoint with label S / 1 / 2 / E. */
+function makePlanIcon(type, label) {
+  return L.divIcon({
+    className:   '',   // suppress Leaflet's default white box
+    html:        `<div class="plan-marker plan-marker-${type}">${label}</div>`,
+    iconSize:    [32, 32],
+    iconAnchor:  [16, 16],
+    popupAnchor: [0, -18],
+  });
+}
+
+/**
+ * Re-label every marker so numbers stay sequential after adds/removes.
+ * S = start, 1/2/3… = via points, E = end.
+ */
+function refreshMarkerLabels() {
+  const n = planPoints.length;
+  planPoints.forEach((point, idx) => {
+    let label, type;
+    if (idx === 0)          { label = 'S'; type = 'start'; }
+    else if (idx === n - 1) { label = 'E'; type = 'end'; }
+    else                    { label = String(idx); type = 'via'; }
+    point.marker.setIcon(makePlanIcon(type, label));
+  });
+}
+
+/**
+ * Create a waypoint marker using L.marker + divIcon so it lands in Leaflet's
+ * markerPane (z-index 600) — naturally above route polylines (overlayPane, 400).
+ * Via markers include a Remove button in their popup.
+ */
+function makePlanMarker(lat, lng, type) {
+  const marker = L.marker([lat, lng], {
+    icon:      makePlanIcon(type, ''),   // label set immediately by refreshMarkerLabels()
+    draggable: true,
+  }).addTo(map);
+
+  // Update coordinates and recalculate when the marker is dragged to a new position.
+  marker.on('dragend', () => {
+    const { lat: newLat, lng: newLng } = marker.getLatLng();
+    const point = planPoints.find(p => p.marker === marker);
+    if (point) {
+      point.lat = newLat;
+      point.lng = newLng;
+      if (planPoints.length >= 2) calculateOrsRoute();
+    }
+  });
+
+  if (type === 'via') {
+    marker.bindPopup(
+      `<div class="marker-popup">
+         <strong>Via point</strong>
+         <button class="popup-remove-btn">Remove</button>
+       </div>`
+    );
+    marker.on('popupopen', (e) => {
+      e.popup.getElement().querySelector('.popup-remove-btn').onclick = () => {
+        marker.closePopup();
+        const point = planPoints.find(p => p.marker === marker);
+        if (point) removePlanPoint(point);
+      };
+    });
+  } else {
+    const popupLabel = type === 'start' ? 'Start' : 'End';
+    marker.bindPopup(`<div class="marker-popup"><strong>${popupLabel}</strong></div>`);
+  }
+
+  return marker;
+}
+
+/**
+ * Remove a plan point from the map and array, then recalculate or reset UI.
+ */
+function removePlanPoint(point) {
+  map.removeLayer(point.marker);
+  planPoints.splice(planPoints.indexOf(point), 1);
+  refreshMarkerLabels();
+
+  if (planPoints.length >= 2) {
+    clearRoute();
+    calculateOrsRoute();
+  } else {
+    clearRoute();
+    calculateBtn.disabled = true;
+    summaryCard.classList.add('hidden');
+    routeInfo.classList.add('hidden');
+    updateInstructions();
+  }
+  updateUndoBtn();
+}
+
+/**
+ * Undo the last-added waypoint by finding the highest addedAt counter.
+ * This is correct regardless of where in the array the point was inserted.
+ */
+function undoLastPoint() {
+  if (planPoints.length === 0) return;
+  const toRemove = planPoints.reduce((latest, p) =>
+    p.addedAt > latest.addedAt ? p : latest
+  );
+  removePlanPoint(toRemove);
+}
+
+function updateInstructions() {
+  if (planPoints.length === 0) {
+    instructions.innerHTML = 'Click the map to set a <strong>start point</strong>.';
+  } else if (planPoints.length === 1) {
+    instructions.innerHTML = 'Click the map to set an <strong>end point</strong>.';
+  } else {
+    instructions.textContent = 'Click to add a via point. Drag any marker to reposition it.';
+  }
+}
+
+function updateUndoBtn() {
+  undoBtn.disabled = planPoints.length === 0;
+}
+
+async function calculateOrsRoute() {
+  setLoading(true);
+  clearRoute();
+
+  try {
+    const res = await fetch('/api/route', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        waypoints:    planPoints.map(p => ({ lat: p.lat, lon: p.lng })),
+        datetime_iso: datetimeInput.value + ':00',
+      }),
+    });
+    if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
+    const data = await res.json();
+
+    drawRoute(data.segments);
+    drawWindArrows(data.wind_arrows);
+    showSummary(data.segments);
+    showRouteInfo(data.route_info);
+    exportBtn.classList.remove('hidden');
+
+  } catch (err) {
+    statusDiv.textContent = `⚠ ${err.message}`;
+  } finally {
+    setLoading(false);
+  }
+}
+
+// Manual recalculate button (useful after changing departure time)
+calculateBtn.addEventListener('click', calculateOrsRoute);
+undoBtn.addEventListener('click', undoLastPoint);
+
+
+// ── Upload tab: GPX → route, then separate wind calculation ──────────
+gpxInput.addEventListener('change', () => {
+  if (gpxInput.files.length > 0) {
+    fileNameEl.textContent = gpxInput.files[0].name;
+    uploadBtn.disabled = false;
+  }
+});
+
+uploadBtn.addEventListener('click', async () => {
+  if (!gpxInput.files.length) return;
+  setLoading(true);
+  clearRoute();
+
+  const formData = new FormData();
+  formData.append('file', gpxInput.files[0]);
+
+  try {
+    const res = await fetch('/api/upload', { method: 'POST', body: formData });
+    if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
+    const data = await res.json();
+
+    uploadedWaypoints = data.waypoints;
+    drawUploadedRoute(data.waypoints);
+    showRouteInfo(data.route_info);
+
+    // Show the "Calculate wind" button now that we have a route
+    windBtn.classList.remove('hidden');
+    windBtn.disabled = false;
+
+  } catch (err) {
+    statusDiv.textContent = `⚠ ${err.message}`;
+  } finally {
+    setLoading(false);
+  }
+});
+
+windBtn.addEventListener('click', async () => {
+  if (!uploadedWaypoints) return;
+  setLoading(true);
+  clearArrows();
+  summaryCard.classList.add('hidden');
+
+  try {
+    const res = await fetch('/api/wind-overlay', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        waypoints:    uploadedWaypoints,
+        datetime_iso: datetimeInput.value + ':00',
+      }),
+    });
+    if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
+    const data = await res.json();
+
+    drawRoute(data.segments);
+    drawWindArrows(data.wind_arrows);
+    showSummary(data.segments);
+    exportBtn.classList.remove('hidden');
+
+  } catch (err) {
+    statusDiv.textContent = `⚠ ${err.message}`;
+  } finally {
+    setLoading(false);
+  }
+});
+
+
+// ── Reset ─────────────────────────────────────────────────────────────
+resetBtn.addEventListener('click', () => {
+  planPoints.forEach(p => map.removeLayer(p.marker));
+  planPoints = [];
+  pointCounter = 0;
+  clearRoute();
+  uploadedWaypoints = null;
+  calculateBtn.disabled = true;
+  undoBtn.disabled = true;
+  windBtn.classList.add('hidden');
+  summaryCard.classList.add('hidden');
+  routeInfo.classList.add('hidden');
+  updateInstructions();
+  statusDiv.textContent = '';
+  gpxInput.value = '';
+  fileNameEl.textContent = 'Choose .gpx file…';
+  uploadBtn.disabled = true;
+});
+
+
+// ── Export GPX ───────────────────────────────────────────────────────
+exportBtn.addEventListener('click', exportGpx);
+
+function exportGpx() {
+  if (!lastRouteSegments.length) return;
+
+  // Reconstruct the ordered point list from the segments.
+  // Each segment shares its end with the next segment's start, so we take
+  // the start of every segment plus the end of the last one.
+  const points = [
+    lastRouteSegments[0].start,
+    ...lastRouteSegments.map(s => s.end),
+  ];
+
+  const trkpts = points
+    .map(p => `      <trkpt lat="${p.lat.toFixed(6)}" lon="${p.lon.toFixed(6)}"></trkpt>`)
+    .join('\n');
+
+  const datetime = datetimeInput.value || new Date().toISOString().slice(0, 16);
+  const gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="KomootLayer" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>KomootLayer route</name>
+    <time>${datetime}:00</time>
+  </metadata>
+  <trk>
+    <name>KomootLayer route</name>
+    <trkseg>
+${trkpts}
+    </trkseg>
+  </trk>
+</gpx>`;
+
+  const blob = new Blob([gpx], { type: 'application/gpx+xml' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = 'komootlayer-route.gpx';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+
+// ── Drawing helpers ───────────────────────────────────────────────────
+function drawRoute(segments) {
+  lastRouteSegments = segments;   // stored for GPX export
+  segments.forEach(seg => {
+    routeLayers.push(
+      L.polyline(
+        [[seg.start.lat, seg.start.lon], [seg.end.lat, seg.end.lon]],
+        { color: windColour(seg.headwind_ms), weight: 5, opacity: 0.9 }
+      ).addTo(map)
+    );
+  });
+  if (segments.length) {
+    const pts = segments.flatMap(s => [[s.start.lat, s.start.lon], [s.end.lat, s.end.lon]]);
+    map.fitBounds(pts, { padding: [40, 40] });
+  }
+}
+
+function drawUploadedRoute(waypoints) {
+  // Draw a plain grey route before wind is calculated
+  const latlngs = waypoints.map(w => [w.lat, w.lon]);
+  routeLayers.push(L.polyline(latlngs, { color: '#888', weight: 4, opacity: 0.7 }).addTo(map));
+  map.fitBounds(latlngs, { padding: [40, 40] });
+}
+
+function drawWindArrows(arrows) {
+  arrows.forEach(arrow => {
+    const arrowTo = (arrow.direction_deg + 180) % 360;
+    const opacity = Math.min(1, 0.4 + arrow.speed_ms / HEADWIND_SCALE * 0.6);
+    const icon = L.divIcon({
+      className: 'wind-arrow-icon',
+      html: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"
+                  style="opacity:${opacity.toFixed(2)}">
+               <polygon points="14,2 22,24 14,18 6,24"
+                        fill="white" stroke="#333" stroke-width="2" stroke-linejoin="round"
+                        transform="rotate(${arrowTo}, 14, 14)"/>
+             </svg>`,
+      iconSize: [28, 28], iconAnchor: [14, 14],
+    });
+    arrowLayers.push(
+      L.marker([arrow.lat, arrow.lon], { icon })
+        .bindPopup(`Wind: ${arrow.speed_ms} m/s from ${arrow.direction_deg}°`)
+        .addTo(map)
+    );
+  });
+}
+
+function clearRoute() {
+  routeLayers.forEach(l => map.removeLayer(l)); routeLayers = [];
+  lastRouteSegments = [];
+  exportBtn.classList.add('hidden');
+  clearArrows();
+}
+
+function clearArrows() {
+  arrowLayers.forEach(l => map.removeLayer(l)); arrowLayers = [];
+}
+
+
+// ── Summary & route info ──────────────────────────────────────────────
+function showSummary(segments) {
+  const total  = segments.length;
+  const tailN  = segments.filter(s => s.headwind_ms < -0.5).length;
+  const headN  = segments.filter(s => s.headwind_ms >  0.5).length;
+  const crossN = total - tailN - headN;
+
+  const tp = pct(tailN, total), hp = pct(headN, total), cp = pct(crossN, total);
+  document.getElementById('pct-tail').textContent  = tp;
+  document.getElementById('pct-cross').textContent = cp;
+  document.getElementById('pct-head').textContent  = hp;
+  document.getElementById('summary-tailwind').style.width  = tp + '%';
+  document.getElementById('summary-cross').style.width     = cp + '%';
+  document.getElementById('summary-headwind').style.width  = hp + '%';
+  summaryCard.classList.remove('hidden');
+}
+
+function showRouteInfo(info) {
+  document.getElementById('val-distance').textContent = info.distance_km;
+  routeInfo.classList.remove('hidden');
+
+  const surfEl   = document.getElementById('val-surfaces');
+  const surfItem = document.getElementById('info-surfaces');
+  if (info.surfaces && info.surfaces.length > 0) {
+    surfEl.textContent = info.surfaces
+      .map(s => `${s.name} ${s.percentage}%`)
+      .join(' · ');
+    surfItem.classList.remove('hidden');
+  } else {
+    surfItem.classList.add('hidden');
+  }
+
+  const warnEl   = document.getElementById('val-warnings');
+  const warnItem = document.getElementById('info-warnings');
+  if (info.warnings && info.warnings.length > 0) {
+    warnEl.textContent = info.warnings.join(' · ');
+    warnItem.classList.remove('hidden');
+  } else {
+    warnItem.classList.add('hidden');
+  }
+}
+
+function setLoading(on) {
+  loadingOverlay.classList.toggle('hidden', !on);
+  calculateBtn.disabled = on;
+  undoBtn.disabled      = on || planPoints.length === 0;
+  uploadBtn.disabled    = on;
+  windBtn.disabled      = on;
+  statusDiv.textContent = '';
+}
+
+function pct(count, total) {
+  return total > 0 ? Math.round(100 * count / total) : 0;
+}

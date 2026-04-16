@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:support.komoot.com)",
+      "WebFetch(domain:open-meteo.com)",
+      "WebSearch"
+    ]
+  }
+}

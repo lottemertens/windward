@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KomootLayer — Wind Route Planner</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ── Sidebar ──────────────────────────────────────────────────── -->
+  <aside id="sidebar">
+
+    <h1>Wind Planner</h1>
+
+    <!-- Departure time + wind overview -->
+    <section class="card">
+      <label for="datetime-input">Departure time</label>
+      <input type="datetime-local" id="datetime-input" />
+      <div id="wind-overview">
+        <div id="wind-compass"></div>
+        <div id="wind-label">Loading wind…</div>
+      </div>
+      <div id="wind-date-note"></div>
+    </section>
+
+    <!-- Route input: plan with ORS or upload a file -->
+    <section class="card">
+      <div class="tab-row">
+        <button class="tab active" id="tab-plan">Plan route</button>
+        <button class="tab"        id="tab-upload">Upload GPX</button>
+      </div>
+
+      <!-- Plan tab -->
+      <div id="panel-plan">
+        <p id="instructions">Click the map to set a <strong>start point</strong>.</p>
+        <button id="calculate-btn" disabled>Calculate route + wind</button>
+      </div>
+
+      <!-- Upload tab -->
+      <div id="panel-upload" class="hidden">
+        <label class="file-label" for="gpx-input">
+          <span id="file-name">Choose .gpx file…</span>
+          <input type="file" id="gpx-input" accept=".gpx" />
+        </label>
+        <button id="upload-btn" disabled>Load route</button>
+        <button id="wind-btn"   class="hidden">Calculate wind</button>
+      </div>
+
+      <div class="secondary-btn-row">
+        <button id="undo-btn" disabled>Undo</button>
+        <button id="reset-btn">Reset</button>
+      </div>
+    </section>
+
+    <!-- Route summary — shown after calculation -->
+    <section class="card hidden" id="summary-card">
+      <p class="card-label">Wind breakdown</p>
+      <div id="summary-bar">
+        <div id="summary-tailwind"></div>
+        <div id="summary-cross"></div>
+        <div id="summary-headwind"></div>
+      </div>
+      <div id="summary-labels">
+        <span class="tail">🟢 <span id="pct-tail">–</span>%</span>
+        <span class="cross">🟡 <span id="pct-cross">–</span>%</span>
+        <span class="head">🔴 <span id="pct-head">–</span>%</span>
+      </div>
+      <button id="export-btn" class="hidden">Download GPX</button>
+    </section>
+
+    <div id="status"></div>
+
+  </aside>
+
+  <!-- ── Right column: map + route info ───────────────────────────── -->
+  <div id="right-col">
+
+    <div id="map-container">
+      <div id="map"></div>
+
+      <div id="legend">
+        <div id="legend-bar"></div>
+        <div id="legend-labels">
+          <span>← Tailwind</span>
+          <span>Crosswind</span>
+          <span>Headwind →</span>
+        </div>
+        <div id="legend-values">
+          <span>−5 m/s</span>
+          <span>0</span>
+          <span>+5 m/s</span>
+        </div>
+      </div>
+
+      <div id="loading-overlay" class="hidden">
+        <div id="bike-loader">🚴</div>
+        <p>Calculating route…</p>
+      </div>
+    </div>
+
+    <!-- Route info strip — shown after a route is loaded -->
+    <div id="route-info" class="hidden">
+      <div class="info-item" id="info-distance">
+        <span class="info-icon">📍</span>
+        <span class="info-value" id="val-distance">–</span>
+        <span class="info-unit">km</span>
+      </div>
+      <div class="info-item" id="info-surfaces">
+        <span class="info-icon">🛣</span>
+        <span class="info-value" id="val-surfaces">–</span>
+      </div>
+      <div class="info-item hidden" id="info-warnings">
+        <span class="info-icon">⚠️</span>
+        <span class="info-value" id="val-warnings">–</span>
+      </div>
+    </div>
+
+  </div><!-- /right-col -->
+
+</div><!-- /app -->
+
+<script src="/static/app.js"></script>
+</body>
+</html>
