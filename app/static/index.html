@@ -42,7 +42,11 @@
           <button class="bike-btn active" id="btn-road">Road bike</button>
           <button class="bike-btn"        id="btn-regular">Regular bike</button>
         </div>
-        <p id="instructions">Click the map to set a <strong>start point</strong>.</p>
+        <div class="address-search">
+          <input type="text" id="address-input" placeholder="Search address…" autocomplete="off" />
+          <ul id="address-results" class="hidden"></ul>
+        </div>
+        <p id="instructions">Click the map or search an address to set a <strong>start point</strong>.</p>
         <button id="calculate-btn" disabled>Calculate route + wind</button>
       </div>
 

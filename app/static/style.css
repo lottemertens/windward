@@ -109,6 +109,47 @@ button {
   gap: 6px;
 }
 
+/* ── Address search ──────────────────────────────────────────────────── */
+.address-search { position: relative; }
+
+#address-input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 0.9rem;
+  color: var(--text);
+  background: #f5f7fb;
+  outline: none;
+}
+#address-input:focus { border-color: var(--accent); background: #fff; }
+
+#address-results {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  list-style: none;
+  z-index: 2000;
+  overflow: hidden;
+}
+#address-results li {
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid var(--border);
+}
+#address-results li:last-child { border-bottom: none; }
+#address-results li:hover { background: var(--bg); }
+
 /* ── Bike type toggle ────────────────────────────────────────────────── */
 .bike-toggle {
   display: flex;

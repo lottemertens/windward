@@ -30,8 +30,10 @@ const fileNameEl = document.getElementById('file-name');
 const uploadBtn  = document.getElementById('upload-btn');
 const windBtn    = document.getElementById('wind-btn');
 const exportBtn  = document.getElementById('export-btn');
-const btnRoad    = document.getElementById('btn-road');
-const btnRegular = document.getElementById('btn-regular');
+const btnRoad        = document.getElementById('btn-road');
+const btnRegular     = document.getElementById('btn-regular');
+const addressInput   = document.getElementById('address-input');
+const addressResults = document.getElementById('address-results');
 
 
 // ── App state ─────────────────────────────────────────────────────────
@@ -119,6 +121,89 @@ tabUpload.addEventListener('click', () => {
   panelUpload.classList.remove('hidden');
   panelPlan.classList.add('hidden');
 });
+
+
+// ── Address search ────────────────────────────────────────────────────
+let searchTimer = null;
+
+addressInput.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  const q = addressInput.value.trim();
+  if (q.length < 3) { hideResults(); return; }
+  // Wait 350 ms after the user stops typing before sending a request.
+  searchTimer = setTimeout(() => fetchAddresses(q), 350);
+});
+
+// Hide the dropdown when the user clicks anywhere else on the page.
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.address-search')) hideResults();
+});
+
+async function fetchAddresses(q) {
+  try {
+    const res = await fetch(`/api/geocode?q=${encodeURIComponent(q)}`);
+    if (!res.ok) return;
+    const results = await res.json();
+    showResults(results);
+  } catch { /* network error — silently ignore */ }
+}
+
+function showResults(results) {
+  addressResults.innerHTML = '';
+  if (!results.length) { hideResults(); return; }
+
+  results.forEach(r => {
+    const li = document.createElement('li');
+    li.textContent = r.name;
+    li.title       = r.full;   // full address on hover
+    li.addEventListener('click', () => {
+      selectAddress(r.lat, r.lon, r.name);
+      addressInput.value = '';
+      hideResults();
+    });
+    addressResults.appendChild(li);
+  });
+
+  addressResults.classList.remove('hidden');
+}
+
+function hideResults() {
+  addressResults.classList.add('hidden');
+  addressResults.innerHTML = '';
+}
+
+/**
+ * Add a waypoint from an address search result — same logic as a map click
+ * but the coordinates come from the geocoder instead of the mouse position.
+ */
+function selectAddress(lat, lng, label) {
+  if (planPoints.length === 0) {
+    const marker = makePlanMarker(lat, lng, 'start');
+    planPoints.push({ lat, lng, marker, addedAt: pointCounter++ });
+    refreshMarkerLabels();
+    map.setView([lat, lng], 14);
+    updateInstructions();
+    updateUndoBtn();
+
+  } else if (planPoints.length === 1) {
+    const marker = makePlanMarker(lat, lng, 'end');
+    planPoints.push({ lat, lng, marker, addedAt: pointCounter++ });
+    refreshMarkerLabels();
+    calculateBtn.disabled = false;
+    map.setView([lat, lng], 12);
+    updateInstructions();
+    updateUndoBtn();
+    calculateOrsRoute();
+
+  } else {
+    const insertIdx = nearestSegmentIndex({ lat, lng }) + 1;
+    const marker = makePlanMarker(lat, lng, 'via');
+    planPoints.splice(insertIdx, 0, { lat, lng, marker, addedAt: pointCounter++ });
+    refreshMarkerLabels();
+    updateUndoBtn();
+    calculateOrsRoute();
+  }
+}
 
 
 // ── Bike type toggle ──────────────────────────────────────────────────
@@ -311,9 +396,9 @@ function undoLastPoint() {
 
 function updateInstructions() {
   if (planPoints.length === 0) {
-    instructions.innerHTML = 'Click the map to set a <strong>start point</strong>.';
+    instructions.innerHTML = 'Search an address or click the map to set a <strong>start point</strong>.';
   } else if (planPoints.length === 1) {
-    instructions.innerHTML = 'Click the map to set an <strong>end point</strong>.';
+    instructions.innerHTML = 'Search an address or click the map to set an <strong>end point</strong>.';
   } else {
     instructions.textContent = 'Click to add a via point. Drag any marker to reposition it.';
   }

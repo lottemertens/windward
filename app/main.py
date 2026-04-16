@@ -61,6 +61,41 @@ class RouteInfoModel(BaseModel):
     warnings:    list[str]            # empty for uploaded routes
 
 
+# --- /api/geocode  (address search via Nominatim) -------------------------
+
+class GeocodeSuggestion(BaseModel):
+    name:     str    # short display name shown in the dropdown
+    full:     str    # full address shown on hover / in the marker popup
+    lat:      float
+    lon:      float
+
+@app.get("/api/geocode", response_model=list[GeocodeSuggestion])
+async def geocode(q: str):
+    """Search for an address using the Nominatim geocoder (OpenStreetMap)."""
+    if len(q.strip()) < 3:
+        return []
+    async with httpx.AsyncClient() as client:
+        res = await client.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"q": q, "format": "json", "limit": 5, "addressdetails": 0},
+            headers={"User-Agent": "Windward/1.0 (cycling wind planner)"},
+            timeout=5.0,
+        )
+        res.raise_for_status()
+    results = res.json()
+    suggestions = []
+    for r in results:
+        parts = r["display_name"].split(", ")
+        short = ", ".join(parts[:2])
+        suggestions.append(GeocodeSuggestion(
+            name=short,
+            full=r["display_name"],
+            lat=float(r["lat"]),
+            lon=float(r["lon"]),
+        ))
+    return suggestions
+
+
 # --- /api/wind ------------------------------------------------------------
 
 class WindOverviewResponse(BaseModel):
