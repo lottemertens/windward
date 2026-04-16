@@ -30,7 +30,7 @@ from src.config import DEFAULT_LOCATION_LAT, DEFAULT_LOCATION_LON, DEFAULT_LOCAT
 
 load_dotenv()
 
-app = FastAPI(title="KomootLayer")
+app = FastAPI(title="Windward")
 
 
 # --- Shared models --------------------------------------------------------
