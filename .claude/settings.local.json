@@ -3,7 +3,12 @@
     "allow": [
       "WebFetch(domain:support.komoot.com)",
       "WebFetch(domain:open-meteo.com)",
-      "WebSearch"
+      "WebSearch",
+      "WebFetch(domain:windward-odgb.onrender.com)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git checkout:*)",
+      "Bash(git push:*)"
     ]
   }
 }

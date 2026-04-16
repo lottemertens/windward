@@ -26,7 +26,7 @@ from src.analysis.wind_analysis import analyse_route_wind, generate_display_arro
 from src.gpx_parser import parse_gpx
 from src.geo import route_distance_km
 from src.models import Coordinate
-from src.config import DEFAULT_LOCATION_LAT, DEFAULT_LOCATION_LON, DEFAULT_LOCATION_NAME
+from src.config import DEFAULT_LOCATION_LAT, DEFAULT_LOCATION_LON, DEFAULT_LOCATION_NAME, CYCLING_PROFILE_ROAD, CYCLING_PROFILE_REGULAR
 
 load_dotenv()
 
@@ -88,6 +88,7 @@ async def get_wind_overview(datetime_iso: str):
 class RouteRequest(BaseModel):
     waypoints:    list[WaypointModel]   # [start, optional via points..., end]
     datetime_iso: str
+    profile:      str = CYCLING_PROFILE_ROAD
 
 class RouteResponse(BaseModel):
     segments:    list[SegmentModel]
@@ -103,12 +104,16 @@ async def calculate_route(request: RouteRequest):
     if len(request.waypoints) < 2:
         raise HTTPException(status_code=400, detail="At least 2 waypoints are required.")
 
+    if request.profile not in (CYCLING_PROFILE_ROAD, CYCLING_PROFILE_REGULAR):
+        raise HTTPException(status_code=400, detail="Invalid profile.")
+
     at = _parse_datetime(request.datetime_iso)
 
     try:
         result = await get_cycling_route(
             waypoints=[Coordinate(lat=w.lat, lon=w.lon) for w in request.waypoints],
             api_key=api_key,
+            profile=request.profile,
         )
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail=f"ORS error: {e.response.text}")

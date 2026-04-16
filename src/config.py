@@ -8,8 +8,10 @@ everywhere that uses it.
 
 # --- OpenRouteService (ORS) -----------------------------------------------
 
-ORS_BASE_URL      = "https://api.openrouteservice.org/v2/directions"
-CYCLING_PROFILE   = "cycling-regular"
+ORS_BASE_URL             = "https://api.openrouteservice.org/v2/directions"
+CYCLING_PROFILE_ROAD     = "cycling-road"      # road bike — avoids unpaved surfaces
+CYCLING_PROFILE_REGULAR  = "cycling-regular"   # regular bike — accepts unpaved
+CYCLING_PROFILE_DEFAULT  = CYCLING_PROFILE_ROAD
 
 # --- Open-Meteo ------------------------------------------------------------
 

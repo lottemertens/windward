@@ -30,12 +30,15 @@ const fileNameEl = document.getElementById('file-name');
 const uploadBtn  = document.getElementById('upload-btn');
 const windBtn    = document.getElementById('wind-btn');
 const exportBtn  = document.getElementById('export-btn');
+const btnRoad    = document.getElementById('btn-road');
+const btnRegular = document.getElementById('btn-regular');
 
 
 // ── App state ─────────────────────────────────────────────────────────
 // planPoints holds all clicked points in order: [start, ...via, end]
 // Each entry: { lat, lng, marker, addedAt }
 // addedAt is a monotonic counter used by undo to find the most recently added point.
+let selectedProfile   = 'cycling-road';   // matches the default in RouteRequest
 let planPoints        = [];
 let pointCounter      = 0;
 let routeLayers       = [];
@@ -115,6 +118,22 @@ tabUpload.addEventListener('click', () => {
   tabPlan.classList.remove('active');
   panelUpload.classList.remove('hidden');
   panelPlan.classList.add('hidden');
+});
+
+
+// ── Bike type toggle ──────────────────────────────────────────────────
+btnRoad.addEventListener('click', () => {
+  selectedProfile = 'cycling-road';
+  btnRoad.classList.add('active');
+  btnRegular.classList.remove('active');
+  if (planPoints.length >= 2) calculateOrsRoute();
+});
+
+btnRegular.addEventListener('click', () => {
+  selectedProfile = 'cycling-regular';
+  btnRegular.classList.add('active');
+  btnRoad.classList.remove('active');
+  if (planPoints.length >= 2) calculateOrsRoute();
 });
 
 
@@ -315,6 +334,7 @@ async function calculateOrsRoute() {
       body: JSON.stringify({
         waypoints:    planPoints.map(p => ({ lat: p.lat, lon: p.lng })),
         datetime_iso: datetimeInput.value + ':00',
+        profile:      selectedProfile,
       }),
     });
     if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
