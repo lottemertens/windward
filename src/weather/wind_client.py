@@ -23,6 +23,7 @@ from src.config import (
     SAMPLE_SPACING_KM,
     MIN_SAMPLES,
     MAX_SAMPLES,
+    MAX_CONCURRENT_REQUESTS,
 )
 
 
@@ -60,7 +61,8 @@ async def get_wind_along_route(
 ) -> list[WindSample]:
     """
     Fetch wind data at evenly-spaced samples along a route.
-    All requests run in parallel — total wait ≈ one request, not N.
+    Requests are capped to MAX_CONCURRENT_REQUESTS in parallel to avoid
+    hitting Open-Meteo's rate limit (429 Too Many Requests).
     """
     if not waypoints:
         return []
@@ -72,8 +74,13 @@ async def get_wind_along_route(
     step    = len(waypoints) / n
     sampled = [waypoints[int(i * step)] for i in range(n)]
 
-    tasks = [get_wind_at(w.lat, w.lon, at) for w in sampled]
-    return await asyncio.gather(*tasks)
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+
+    async def fetch_one(w: Coordinate) -> WindSample:
+        async with semaphore:
+            return await get_wind_at(w.lat, w.lon, at)
+
+    return await asyncio.gather(*[fetch_one(w) for w in sampled])
 
 
 def _pick_api_url(at: datetime) -> str:

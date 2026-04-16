@@ -47,6 +47,7 @@ HEADWIND_SCALE_MS = 5.0
 # grid spacing returns the same cell repeatedly, so 5 km is the sweet spot:
 # fine enough to capture wind variation, not so fine that it's redundant.
 
-SAMPLE_SPACING_KM = 5    # target distance between wind samples
-MIN_SAMPLES       = 3    # always at least start, middle, end
-MAX_SAMPLES       = 25   # cap to avoid excessive API calls on very long routes
+SAMPLE_SPACING_KM       = 5    # target distance between wind samples
+MIN_SAMPLES             = 3    # always at least start, middle, end
+MAX_SAMPLES             = 25   # cap to avoid excessive API calls on very long routes
+MAX_CONCURRENT_REQUESTS = 5    # cap parallel Open-Meteo calls to avoid 429 rate limiting
