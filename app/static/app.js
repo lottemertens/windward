@@ -460,11 +460,13 @@ async function _fetchRoute(avoidGeometries = []) {
 async function calculateOrsRoute() {
   setLoading(true);
   discardPreview();   // cancel any pending preview before a full recalculate
-  clearRoute();
 
   try {
     const data = await _fetchRoute(avoidedClosures.map(c => c.geometry));
 
+    // Only clear the old route once we know the new one succeeded —
+    // this way a failed API call leaves the existing route visible.
+    clearRoute();
     drawRoute(data.segments);
     drawWindArrows(data.wind_arrows);
     showSummary(data.segments);
