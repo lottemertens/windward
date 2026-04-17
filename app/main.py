@@ -31,7 +31,7 @@ from src.analysis.wind_analysis import analyse_route_wind, generate_display_arro
 from src.gpx_parser import parse_gpx
 from src.geo import route_distance_km
 from src.models import Coordinate
-from src.config import DEFAULT_LOCATION_LAT, DEFAULT_LOCATION_LON, DEFAULT_LOCATION_NAME, CYCLING_PROFILE_ROAD, CYCLING_PROFILE_REGULAR, ORS_GEOCODE_URL
+from src.config import DEFAULT_LOCATION_LAT, DEFAULT_LOCATION_LON, DEFAULT_LOCATION_NAME, CYCLING_PROFILE_ROAD, CYCLING_PROFILE_REGULAR, ORS_GEOCODE_URL, CLOSURE_AVOID_BUFFER_DEG
 from src.closures.ndw_client import get_closures, force_refresh
 
 load_dotenv()
@@ -134,9 +134,10 @@ async def get_wind_overview(datetime_iso: str):
 # --- /api/route  (ORS + wind in one call) ---------------------------------
 
 class RouteRequest(BaseModel):
-    waypoints:    list[WaypointModel]   # [start, optional via points..., end]
-    datetime_iso: str
-    profile:      str = CYCLING_PROFILE_ROAD
+    waypoints:        list[WaypointModel]   # [start, optional via points..., end]
+    datetime_iso:     str
+    profile:          str  = CYCLING_PROFILE_ROAD
+    avoid_geometries: list = []             # list of [[lat,lon],...] closure geometries to avoid
 
 class RouteResponse(BaseModel):
     segments:    list[SegmentModel]
@@ -157,11 +158,14 @@ async def calculate_route(request: RouteRequest):
 
     at = _parse_datetime(request.datetime_iso)
 
+    avoid = _geometries_to_avoid_polygons(request.avoid_geometries)
+
     try:
         result = await get_cycling_route(
             waypoints=[Coordinate(lat=w.lat, lon=w.lon) for w in request.waypoints],
             api_key=api_key,
             profile=request.profile,
+            avoid_polygons=avoid,
         )
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail=f"ORS error: {e.response.text}")
@@ -251,6 +255,7 @@ async def calculate_wind_overlay(request: WindOverlayRequest):
 # --- /api/closures  (cached NDW road closures) ----------------------------
 
 class ClosureModel(BaseModel):
+    situation_id:     str
     lat:              float
     lon:              float
     source:           str
@@ -276,6 +281,7 @@ async def list_closures():
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not fetch NDW data: {e}")
     return [ClosureModel(
+                situation_id=r.situation_id,
                 lat=r.lat, lon=r.lon, source=r.source,
                 start=r.start, end=r.end, description=r.description,
                 geometry=r.geometry, warning=r.warning,
@@ -301,6 +307,37 @@ async def refresh_closures(token: str):
 
 
 # --- Helpers --------------------------------------------------------------
+
+def _geometries_to_avoid_polygons(geometries: list) -> Optional[dict]:
+    """
+    Convert a list of [[lat,lon],...] closure geometry arrays into an ORS
+    avoid_polygons GeoJSON object (MultiPolygon).
+
+    For each geometry we build a bounding-box polygon with CLOSURE_AVOID_BUFFER_DEG
+    padding, then hand the whole set to ORS in one go.
+    ORS expects [lon, lat] coordinate order (GeoJSON convention).
+    """
+    if not geometries:
+        return None
+
+    polygons = []
+    pad = CLOSURE_AVOID_BUFFER_DEG
+    for geo in geometries:
+        if not geo:
+            continue
+        lats = [p[0] for p in geo]
+        lons = [p[1] for p in geo]
+        ring = [
+            [min(lons) - pad, min(lats) - pad],
+            [max(lons) + pad, min(lats) - pad],
+            [max(lons) + pad, max(lats) + pad],
+            [min(lons) - pad, max(lats) + pad],
+            [min(lons) - pad, min(lats) - pad],   # close the ring
+        ]
+        polygons.append([ring])
+
+    return {"type": "MultiPolygon", "coordinates": polygons} if polygons else None
+
 
 def _parse_datetime(datetime_iso: str) -> datetime:
     try:

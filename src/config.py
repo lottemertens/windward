@@ -66,5 +66,6 @@ NDW_NS_SITUATION    = "http://datex2.eu/schema/3/situation"
 NDW_NS_CONTAINER    = "http://datex2.eu/schema/3/messageContainer"
 NDW_CLOSURE_TYPE    = "carriagewayClosures"
 
-CLOSURE_CACHE_TTL_HOURS = 23    # refresh the cache if it is older than this
-CLOSURE_MAX_DAYS_AHEAD  = 7     # only show closures starting within this many days
+CLOSURE_CACHE_TTL_HOURS  = 23     # refresh the cache if it is older than this
+CLOSURE_MAX_DAYS_AHEAD   = 7      # only show closures starting within this many days
+CLOSURE_AVOID_BUFFER_DEG = 0.0003 # ~33 m padding around a closure bounding box for ORS avoid_polygons
