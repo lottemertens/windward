@@ -38,6 +38,8 @@ const rerouteBar        = document.getElementById('reroute-bar');
 const acceptRerouteBtn  = document.getElementById('accept-reroute-btn');
 const discardRerouteBtn = document.getElementById('discard-reroute-btn');
 const avoidAllBtn       = document.getElementById('avoid-all-btn');
+const closureLoadingEl  = document.getElementById('closure-loading');
+const addressSearch     = addressInput.parentElement;   // .address-search div
 
 
 // ── App state ─────────────────────────────────────────────────────────
@@ -185,12 +187,14 @@ document.addEventListener('click', (e) => {
 });
 
 async function fetchAddresses(q) {
+  addressSearch.classList.add('searching');
   try {
     const res = await fetch(`/api/geocode?q=${encodeURIComponent(q)}`);
     if (!res.ok) return;
     const results = await res.json();
     showResults(results);
   } catch { /* network error — silently ignore */ }
+  finally { addressSearch.classList.remove('searching'); }
 }
 
 function showResults(results) {
@@ -1005,6 +1009,7 @@ function renderClosures(closures) {
 
 async function loadAndFilterClosures(segments) {
   if (!segments.length) return;
+  closureLoadingEl.classList.remove('hidden');
   try {
     // Use the session cache if available — avoids a re-fetch after accepting a
     // reroute and prevents closures from flickering off then (maybe) back on.
@@ -1017,5 +1022,7 @@ async function loadAndFilterClosures(segments) {
     renderClosures(onRoute);
   } catch (_) {
     // Network error — closures are best-effort
+  } finally {
+    closureLoadingEl.classList.add('hidden');
   }
 }

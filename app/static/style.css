@@ -445,6 +445,59 @@ button {
 
 #avoid-all-btn { background: #fef2f2; color: #b91c1c; border: 1px solid #fca5a5; }
 
+/* ── Spinner keyframe (shared) ────────────────────────────────────────── */
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Address search spinner ───────────────────────────────────────────── */
+/* Shown while a geocode request is in flight. A small ring appears on the
+   right side of the input; the input gets extra right padding so text
+   doesn't overlap the spinner. */
+.address-search.searching #address-input { padding-right: 32px; }
+.address-search.searching::after {
+  content: '';
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  pointer-events: none;
+}
+
+/* ── Closure loading pill ─────────────────────────────────────────────── */
+/* Small floating status badge in the bottom-right corner of the map,
+   shown while closures are being fetched or filtered after a route loads. */
+#closure-loading {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  background: rgba(30, 41, 59, 0.82);
+  backdrop-filter: blur(3px);
+  color: #e2e8f0;
+  font-size: 0.72rem;
+  padding: 4px 10px 4px 8px;
+  border-radius: 99px;
+  pointer-events: none;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#closure-loading::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid rgba(255,255,255,0.25);
+  border-top-color: #e2e8f0;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  flex-shrink: 0;
+}
+
 /* ── Utility ──────────────────────────────────────────────────────────── */
 .hidden { display: none !important; }
 
