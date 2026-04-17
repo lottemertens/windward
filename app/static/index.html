@@ -79,6 +79,7 @@
         <span class="cross">🟡 <span id="pct-cross">–</span>%</span>
         <span class="head">🔴 <span id="pct-head">–</span>%</span>
       </div>
+      <button id="avoid-all-btn" class="hidden">⛔ Avoid all closures</button>
       <button id="export-btn" class="hidden">Download GPX</button>
     </section>
 
@@ -109,6 +110,15 @@
       <div id="loading-overlay" class="hidden">
         <div id="bike-loader">🚴</div>
         <p>Calculating route…</p>
+      </div>
+
+      <!-- Shown while a reroute preview is active -->
+      <div id="reroute-bar" class="hidden">
+        <span id="reroute-bar-label">Proposed reroute</span>
+        <div class="reroute-bar-actions">
+          <button id="accept-reroute-btn" class="reroute-btn reroute-accept">Accept</button>
+          <button id="discard-reroute-btn" class="reroute-btn reroute-discard">Discard</button>
+        </div>
       </div>
     </div>
 

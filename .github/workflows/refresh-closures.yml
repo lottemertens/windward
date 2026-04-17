@@ -1,0 +1,30 @@
+# Warm the NDW road-closure cache every morning at 06:00 UTC (08:00 Amsterdam).
+#
+# How it works:
+#   1. GitHub's scheduler wakes this workflow at 06:00 UTC.
+#   2. The single step sends a POST request to the /api/refresh-closures endpoint
+#      on Render, passing a secret token as a query parameter.
+#   3. The Render app fetches the 237 MB NDW planning feed, parses it, and stores
+#      the filtered result in memory.  All user requests that day return instantly
+#      from cache instead of waiting for the cold fetch.
+#
+# Required secrets (set in: GitHub repo → Settings → Secrets → Actions):
+#   RENDER_APP_URL  — e.g. https://windward-odgb.onrender.com
+#   REFRESH_TOKEN   — any random string; must match REFRESH_TOKEN env var on Render
+
+name: Refresh road closure cache
+
+on:
+  schedule:
+    - cron: '0 5 * * *'   # 05:00 UTC = 07:00 Amsterdam (06:00 in winter)
+  workflow_dispatch:        # also lets you trigger it manually from the GitHub UI
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake Render and refresh closures
+        run: |
+          curl --fail --silent --show-error \
+            -X POST \
+            "${{ secrets.RENDER_APP_URL }}/api/refresh-closures?token=${{ secrets.REFRESH_TOKEN }}"

@@ -30,10 +30,14 @@ const fileNameEl = document.getElementById('file-name');
 const uploadBtn  = document.getElementById('upload-btn');
 const windBtn    = document.getElementById('wind-btn');
 const exportBtn  = document.getElementById('export-btn');
-const btnRoad        = document.getElementById('btn-road');
-const btnRegular     = document.getElementById('btn-regular');
-const addressInput   = document.getElementById('address-input');
-const addressResults = document.getElementById('address-results');
+const btnRoad           = document.getElementById('btn-road');
+const btnRegular        = document.getElementById('btn-regular');
+const addressInput      = document.getElementById('address-input');
+const addressResults    = document.getElementById('address-results');
+const rerouteBar        = document.getElementById('reroute-bar');
+const acceptRerouteBtn  = document.getElementById('accept-reroute-btn');
+const discardRerouteBtn = document.getElementById('discard-reroute-btn');
+const avoidAllBtn       = document.getElementById('avoid-all-btn');
 
 
 // ── App state ─────────────────────────────────────────────────────────
@@ -48,14 +52,31 @@ let arrowLayers       = [];
 let uploadedWaypoints = null;   // set when a GPX is loaded
 let lastRouteSegments = [];     // stored after each calculation, used for GPX export
 
+// ── Reroute avoidance state ────────────────────────────────────────────
+// avoidedClosures: array of closure objects the user has chosen to avoid.
+// previewLayers:   the proposed reroute polylines shown during preview.
+// previewSegments: the segments of the proposed reroute (needed for closure filtering).
+// previewArrows:   wind_arrows for the proposed reroute (drawn on Accept).
+// allClosuresCache: session-level cache of the full /api/closures response.
+//   Populated on page load (background pre-warm) and reused on every route.
+//   No need to persist across page reloads — the server refreshes daily.
+let avoidedClosures  = [];
+let previewLayers    = [];
+let previewSegments  = [];
+let previewArrows    = [];
+let allClosuresCache = null;
+
 // Default datetime to current time rounded to the nearest hour
 const now = new Date();
 now.setMinutes(0, 0, 0);
 datetimeInput.value = now.toISOString().slice(0, 16);
 
 
-// ── Colour scale ──────────────────────────────────────────────────────
-const HEADWIND_SCALE = 5.0;
+// ── Constants ─────────────────────────────────────────────────────────
+const HEADWIND_SCALE         = 5.0;   // m/s — mirrors HEADWIND_SCALE_MS in config.py
+const CLOSURE_BUFFER_M       = 10;    // metres from route line to include a road closure
+const GHOST_ROUTE_OPACITY    = 0.40;  // opacity of the old route during reroute preview
+const GHOST_ARROW_OPACITY    = 0.25;  // arrows are less important so fade them more
 
 function windColour(headwindMs) {
   const t = Math.max(-1, Math.min(1, headwindMs / HEADWIND_SCALE));
@@ -105,6 +126,16 @@ function degreesToCompass(deg) {
 
 fetchWindOverview();
 datetimeInput.addEventListener('change', fetchWindOverview);
+
+// Warm the closure cache silently on page load. The NDW feed takes ~25 s to
+// fetch and parse on the first request; doing it now means closures appear
+// immediately after the first route calculation instead of after a long wait.
+// We also store the result in allClosuresCache so subsequent calls (e.g. after
+// accepting a reroute) don't re-fetch and lose the data.
+fetch('/api/closures')
+  .then(r => r.ok ? r.json() : Promise.reject())
+  .then(data => { allClosuresCache = data; })
+  .catch(() => {});
 
 
 // ── Tab switching ─────────────────────────────────────────────────────
@@ -409,22 +440,30 @@ function updateUndoBtn() {
   undoBtn.disabled = planPoints.length === 0;
 }
 
+// Fetch a route from the API. avoidGeometries is an optional array of
+// [[lat,lon],...] closure geometries to pass as avoid_polygons to ORS.
+async function _fetchRoute(avoidGeometries = []) {
+  const res = await fetch('/api/route', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      waypoints:        planPoints.map(p => ({ lat: p.lat, lon: p.lng })),
+      datetime_iso:     datetimeInput.value + ':00',
+      profile:          selectedProfile,
+      avoid_geometries: avoidGeometries,
+    }),
+  });
+  if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
+  return res.json();
+}
+
 async function calculateOrsRoute() {
   setLoading(true);
+  discardPreview();   // cancel any pending preview before a full recalculate
   clearRoute();
 
   try {
-    const res = await fetch('/api/route', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        waypoints:    planPoints.map(p => ({ lat: p.lat, lon: p.lng })),
-        datetime_iso: datetimeInput.value + ':00',
-        profile:      selectedProfile,
-      }),
-    });
-    if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
-    const data = await res.json();
+    const data = await _fetchRoute(avoidedClosures.map(c => c.geometry));
 
     drawRoute(data.segments);
     drawWindArrows(data.wind_arrows);
@@ -439,8 +478,119 @@ async function calculateOrsRoute() {
   }
 }
 
+// ── Reroute preview ────────────────────────────────────────────────────
+
+async function avoidClosure(closure) {
+  if (planPoints.length < 2) return;
+  if (avoidedClosures.some(c => c.situation_id === closure.situation_id)) return;
+
+  avoidedClosures.push(closure);
+  setLoading(true);
+
+  try {
+    const data = await _fetchRoute(avoidedClosures.map(c => c.geometry));
+
+    // Fade the current route so the user can compare
+    routeLayers.forEach(l => l.setStyle({ opacity: GHOST_ROUTE_OPACITY, weight: 5 }));
+    arrowLayers.forEach(l => l.setOpacity(GHOST_ARROW_OPACITY));
+
+    // Draw proposed reroute on top
+    previewSegments = data.segments;
+    previewArrows   = data.wind_arrows;
+    previewLayers = _drawSegmentPolylines(data.segments, 0.9);
+
+    rerouteBar.classList.remove('hidden');
+
+  } catch (err) {
+    avoidedClosures.pop();   // roll back since the request failed
+    statusDiv.textContent = `⚠ Could not reroute: ${err.message}`;
+  } finally {
+    setLoading(false);
+  }
+}
+
+function acceptPreview() {
+  if (!previewLayers.length) return;
+
+  // Remove ghost route and arrows, make preview the new main route
+  routeLayers.forEach(l => map.removeLayer(l));
+  arrowLayers.forEach(l => map.removeLayer(l));
+  routeLayers       = previewLayers;
+  arrowLayers       = [];
+  previewLayers     = [];
+  lastRouteSegments = previewSegments;
+  previewSegments   = [];
+
+  // Draw the wind arrows that were fetched for the preview route
+  drawWindArrows(previewArrows);
+  previewArrows = [];
+
+  rerouteBar.classList.add('hidden');
+
+  // Refilter closures using the cached data — no re-fetch needed
+  loadAndFilterClosures(lastRouteSegments);
+  showSummary(lastRouteSegments);
+}
+
+function discardPreview() {
+  if (!previewLayers.length) return;
+
+  // Remove the preview route
+  previewLayers.forEach(l => map.removeLayer(l));
+  previewLayers   = [];
+  previewSegments = [];
+  previewArrows   = [];
+
+  // Remove the closure we just added and restore route opacity
+  avoidedClosures.pop();
+  routeLayers.forEach(l => l.setStyle({ opacity: 0.9, weight: 5 }));
+  arrowLayers.forEach(l => l.setOpacity(1));
+
+  rerouteBar.classList.add('hidden');
+}
+
+async function avoidAllClosures() {
+  if (!closureLayers.length) return;
+  // Collect all closures currently shown on the route
+  // closureLayers stores the markers; we stored the closure data on each marker
+  const newToAvoid = currentRouteClosures.filter(
+    c => !avoidedClosures.some(a => a.situation_id === c.situation_id)
+  );
+  if (!newToAvoid.length) return;
+  newToAvoid.forEach(c => avoidedClosures.push(c));
+
+  setLoading(true);
+  try {
+    const data = await _fetchRoute(avoidedClosures.map(c => c.geometry));
+    routeLayers.forEach(l => l.setStyle({ opacity: GHOST_ROUTE_OPACITY, weight: 5 }));
+    arrowLayers.forEach(l => l.setOpacity(GHOST_ARROW_OPACITY));
+    previewSegments = data.segments;
+    previewArrows   = data.wind_arrows;
+    previewLayers = _drawSegmentPolylines(data.segments, 0.9);
+    rerouteBar.classList.add('hidden'); // will re-show below
+    rerouteBar.classList.remove('hidden');
+  } catch (err) {
+    newToAvoid.forEach(() => avoidedClosures.pop());
+    statusDiv.textContent = `⚠ Could not reroute: ${err.message}`;
+  } finally {
+    setLoading(false);
+  }
+}
+
+function stopAvoiding(closureId) {
+  const idx = avoidedClosures.findIndex(c => c.situation_id === closureId);
+  if (idx === -1) return;
+  avoidedClosures.splice(idx, 1);
+  // Trigger a full recalculate without this avoid (no preview — just recalculate)
+  calculateOrsRoute();
+}
+
+acceptRerouteBtn.addEventListener('click',  acceptPreview);
+discardRerouteBtn.addEventListener('click', discardPreview);
+avoidAllBtn.addEventListener('click', avoidAllClosures);
+
 // Manual recalculate button (useful after changing departure time)
-calculateBtn.addEventListener('click', calculateOrsRoute);
+calculateBtn.addEventListener('click', () => { avoidedClosures = []; calculateOrsRoute(); });
 undoBtn.addEventListener('click', undoLastPoint);
 
 
@@ -575,20 +725,26 @@ ${trkpts}
 
 
 // ── Drawing helpers ───────────────────────────────────────────────────
+
+// Draw segment polylines and return the layer array. Used by both the main
+// route and the reroute preview so the logic lives in one place.
+function _drawSegmentPolylines(segments, opacity = 0.9) {
+  return segments.map(seg =>
+    L.polyline(
+      [[seg.start.lat, seg.start.lon], [seg.end.lat, seg.end.lon]],
+      { color: windColour(seg.headwind_ms), weight: 5, opacity }
+    ).addTo(map)
+  );
+}
+
 function drawRoute(segments) {
   lastRouteSegments = segments;   // stored for GPX export
-  segments.forEach(seg => {
-    routeLayers.push(
-      L.polyline(
-        [[seg.start.lat, seg.start.lon], [seg.end.lat, seg.end.lon]],
-        { color: windColour(seg.headwind_ms), weight: 5, opacity: 0.9 }
-      ).addTo(map)
-    );
-  });
+  routeLayers = _drawSegmentPolylines(segments);
   if (segments.length) {
     const pts = segments.flatMap(s => [[s.start.lat, s.start.lon], [s.end.lat, s.end.lon]]);
     map.fitBounds(pts, { padding: [40, 40] });
   }
+  loadAndFilterClosures(segments);
 }
 
 function drawUploadedRoute(waypoints) {
@@ -621,10 +777,15 @@ function drawWindArrows(arrows) {
 }
 
 function clearRoute() {
-  routeLayers.forEach(l => map.removeLayer(l)); routeLayers = [];
+  previewLayers.forEach(l => map.removeLayer(l)); previewLayers = [];
+  routeLayers.forEach(l => map.removeLayer(l));   routeLayers   = [];
   lastRouteSegments = [];
+  previewSegments   = [];
+  rerouteBar.classList.add('hidden');
   exportBtn.classList.add('hidden');
+  avoidAllBtn.classList.add('hidden');
   clearArrows();
+  clearClosures();
 }
 
 function clearArrows() {
@@ -685,4 +846,160 @@ function setLoading(on) {
 
 function pct(count, total) {
   return total > 0 ? Math.round(100 * count / total) : 0;
+}
+
+
+// ── Road closures ─────────────────────────────────────────────────────────────
+// Closures are only shown after a route is calculated, filtered to those within
+// CLOSURE_BUFFER_M metres of the route. All 8 000+ NL closures are in the
+// server cache; filtering happens here in JS (~5 ms) so no extra API call is
+// needed per route change.
+
+let closureLayers        = [];
+let currentRouteClosures = [];   // closures currently shown on the route (for "Avoid all")
+
+// ── Geometry helper ───────────────────────────────────────────────────────────
+// Returns the distance in metres from point p to the line segment a→b.
+// Uses a flat-earth approximation with cosLat correction, accurate enough
+// for the short segments we're dealing with.
+function distPointToSegmentM(p, a, b) {
+  const cosLat = Math.cos(p.lat * Math.PI / 180);
+  const px = (p.lon - a.lon) * cosLat;
+  const py =  p.lat - a.lat;
+  const bx = (b.lon - a.lon) * cosLat;
+  const by =  b.lat - a.lat;
+  const len2 = bx * bx + by * by;
+
+  let t = len2 > 0 ? Math.max(0, Math.min(1, (px * bx + py * by) / len2)) : 0;
+
+  const dx = px - t * bx;
+  const dy = py - t * by;
+  return Math.sqrt(dx * dx + dy * dy) * 111_319;   // degrees → metres
+}
+
+function isClosureOnRoute(closure, segments) {
+  return segments.some(seg =>
+    distPointToSegmentM(
+      { lat: closure.lat, lon: closure.lon },
+      seg.start,
+      seg.end,
+    ) <= CLOSURE_BUFFER_M
+  );
+}
+
+// ── Rendering ─────────────────────────────────────────────────────────────────
+
+function makeClosureIcon() {
+  return L.divIcon({
+    className: '',
+    html: `<div class="closure-marker" title="Road closure">✕</div>`,
+    iconSize:    [22, 22],
+    iconAnchor:  [11, 11],
+    popupAnchor: [0, -12],
+  });
+}
+
+function formatClosureDate(iso) {
+  if (!iso) return 'onbekend';
+  return new Date(iso).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function closurePopupHtml(c) {
+  const isAvoided = avoidedClosures.some(a => a.situation_id === c.situation_id);
+  const bikeTag   = c.bicycle_specific
+    ? `<span class="closure-tag closure-tag-bike">🚲 fietsers</span>` : '';
+  const warning   = c.warning
+    ? `<p class="closure-warning">${c.warning}</p>` : '';
+  const name      = c.project_name
+    ? `<p class="closure-project">${c.project_name}</p>` : '';
+  const urlLink   = c.url
+    ? `<p class="closure-url"><a href="${c.url}" target="_blank" rel="noopener">Meer info ↗</a></p>` : '';
+  const actionBtn = isAvoided
+    ? `<button class="closure-action-btn closure-stop-btn" data-id="${c.situation_id}">Stop avoiding</button>`
+    : `<button class="closure-action-btn closure-avoid-btn" data-id="${c.situation_id}">⛔ Avoid this</button>`;
+
+  return `
+    <div class="closure-popup">
+      <strong>Weg afgesloten ${bikeTag}</strong>
+      ${warning}
+      <p class="closure-source">${c.source}</p>
+      ${name}
+      ${urlLink}
+      <p class="closure-dates">📅 ${formatClosureDate(c.start)} – ${formatClosureDate(c.end)}</p>
+      ${actionBtn}
+    </div>`;
+}
+
+let closureHighlight = null;   // the currently drawn road geometry highlight
+
+function clearClosureHighlight() {
+  if (closureHighlight) { map.removeLayer(closureHighlight); closureHighlight = null; }
+}
+
+function clearClosures() {
+  clearClosureHighlight();
+  closureLayers.forEach(l => map.removeLayer(l));
+  closureLayers = [];
+}
+
+function renderClosures(closures) {
+  clearClosures();
+  currentRouteClosures = closures;
+  avoidAllBtn.classList.toggle('hidden', closures.length === 0);
+
+  closures.forEach(c => {
+    const marker = L.marker([c.lat, c.lon], {
+      icon:         makeClosureIcon(),
+      zIndexOffset: 500,   // above route polylines, below waypoint markers (1000)
+    });
+
+    // Regenerate popup content on open so avoid/stop button reflects current state
+    marker.bindPopup('', { maxWidth: 280 });
+    marker.on('popupopen', (e) => {
+      const html = closurePopupHtml(c);
+      e.popup.setContent(html);
+
+      // Wire up the action button inside the popup
+      const btn = e.popup.getElement().querySelector('.closure-action-btn');
+      if (btn) {
+        btn.onclick = () => {
+          marker.closePopup();
+          if (btn.classList.contains('closure-avoid-btn')) {
+            avoidClosure(c);
+          } else {
+            stopAvoiding(c.situation_id);
+          }
+        };
+      }
+
+      // Draw road geometry highlight
+      if (c.geometry && c.geometry.length > 1) {
+        clearClosureHighlight();
+        closureHighlight = L.polyline(c.geometry, {
+          color: '#dc2626', weight: 7, opacity: 0.85, dashArray: '10, 6',
+        }).addTo(map);
+      }
+    });
+    marker.on('popupclose', clearClosureHighlight);
+
+    marker.addTo(map);
+    closureLayers.push(marker);
+  });
+}
+
+async function loadAndFilterClosures(segments) {
+  if (!segments.length) return;
+  try {
+    // Use the session cache if available — avoids a re-fetch after accepting a
+    // reroute and prevents closures from flickering off then (maybe) back on.
+    if (!allClosuresCache) {
+      const res = await fetch('/api/closures');
+      if (!res.ok) return;
+      allClosuresCache = await res.json();
+    }
+    const onRoute = allClosuresCache.filter(c => isClosureOnRoute(c, segments));
+    renderClosures(onRoute);
+  } catch (_) {
+    // Network error — closures are best-effort
+  }
 }

@@ -5,14 +5,19 @@ Run with:
     uvicorn app.main:app --reload
 
 Endpoints:
-    GET  /api/wind           — wind at default location for a given time
-    POST /api/route          — plan a route via ORS + calculate wind
-    POST /api/upload         — parse an uploaded GPX file
-    POST /api/wind-overlay   — calculate wind for an already-known set of waypoints
+    GET  /api/wind              — wind at default location for a given time
+    POST /api/route             — plan a route via ORS + calculate wind
+    POST /api/upload            — parse an uploaded GPX file
+    POST /api/wind-overlay      — calculate wind for an already-known set of waypoints
+    GET  /api/closures          — active road closures for all of NL (cached)
+    POST /api/refresh-closures  — force refresh the closure cache (token-protected)
 """
+
+from __future__ import annotations
 
 import os
 from datetime import datetime
+from typing import Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.staticfiles import StaticFiles
@@ -26,7 +31,8 @@ from src.analysis.wind_analysis import analyse_route_wind, generate_display_arro
 from src.gpx_parser import parse_gpx
 from src.geo import route_distance_km
 from src.models import Coordinate
-from src.config import DEFAULT_LOCATION_LAT, DEFAULT_LOCATION_LON, DEFAULT_LOCATION_NAME, CYCLING_PROFILE_ROAD, CYCLING_PROFILE_REGULAR, ORS_GEOCODE_URL
+from src.config import DEFAULT_LOCATION_LAT, DEFAULT_LOCATION_LON, DEFAULT_LOCATION_NAME, CYCLING_PROFILE_ROAD, CYCLING_PROFILE_REGULAR, ORS_GEOCODE_URL, CLOSURE_AVOID_BUFFER_DEG
+from src.closures.ndw_client import get_closures, force_refresh
 
 load_dotenv()
 
@@ -132,9 +138,10 @@ async def get_wind_overview(datetime_iso: str):
 # --- /api/route  (ORS + wind in one call) ---------------------------------
 
 class RouteRequest(BaseModel):
-    waypoints:    list[WaypointModel]   # [start, optional via points..., end]
-    datetime_iso: str
-    profile:      str = CYCLING_PROFILE_ROAD
+    waypoints:        list[WaypointModel]   # [start, optional via points..., end]
+    datetime_iso:     str
+    profile:          str  = CYCLING_PROFILE_ROAD
+    avoid_geometries: list = []             # list of [[lat,lon],...] closure geometries to avoid
 
 class RouteResponse(BaseModel):
     segments:    list[SegmentModel]
@@ -155,11 +162,14 @@ async def calculate_route(request: RouteRequest):
 
     at = _parse_datetime(request.datetime_iso)
 
+    avoid = _geometries_to_avoid_polygons(request.avoid_geometries)
+
     try:
         result = await get_cycling_route(
             waypoints=[Coordinate(lat=w.lat, lon=w.lon) for w in request.waypoints],
             api_key=api_key,
             profile=request.profile,
+            avoid_polygons=avoid,
         )
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail=f"ORS error: {e.response.text}")
@@ -246,7 +256,92 @@ async def calculate_wind_overlay(request: WindOverlayRequest):
     )
 
 
+# --- /api/closures  (cached NDW road closures) ----------------------------
+
+class ClosureModel(BaseModel):
+    situation_id:     str
+    lat:              float
+    lon:              float
+    source:           str
+    start:            str
+    end:              Optional[str] = None
+    description:      Optional[str] = None
+    geometry:         list          = []   # [[lat, lon], …] for map highlight
+    warning:          Optional[str] = None # plain-Dutch summary, e.g. "Weg dicht in één richting"
+    project_name:     Optional[str] = None
+    url:              Optional[str] = None
+    bicycle_specific: bool          = False
+
+@app.get("/api/closures", response_model=list[ClosureModel])
+async def list_closures():
+    """
+    Return all active and upcoming road closures (carriagewayClosures) for NL.
+    Data is fetched from the NDW planning feed once per day and cached in memory.
+    The first call of the day will take a few seconds while the 237 MB feed is
+    downloaded and parsed; subsequent calls return instantly from cache.
+    """
+    try:
+        records = await get_closures()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not fetch NDW data: {e}")
+    return [ClosureModel(
+                situation_id=r.situation_id,
+                lat=r.lat, lon=r.lon, source=r.source,
+                start=r.start, end=r.end, description=r.description,
+                geometry=r.geometry, warning=r.warning,
+                project_name=r.project_name, url=r.url,
+                bicycle_specific=r.bicycle_specific,
+            ) for r in records]
+
+
+@app.post("/api/refresh-closures")
+async def refresh_closures(token: str):
+    """
+    Force-refresh the NDW closure cache. Protected by REFRESH_TOKEN env var so
+    only the GitHub Actions cron job (or you) can call it.
+    """
+    expected = os.getenv("REFRESH_TOKEN")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Invalid token.")
+    try:
+        count = await force_refresh()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Refresh failed: {e}")
+    return {"ok": True, "closures_cached": count}
+
+
 # --- Helpers --------------------------------------------------------------
+
+def _geometries_to_avoid_polygons(geometries: list) -> Optional[dict]:
+    """
+    Convert a list of [[lat,lon],...] closure geometry arrays into an ORS
+    avoid_polygons GeoJSON object (MultiPolygon).
+
+    For each geometry we build a bounding-box polygon with CLOSURE_AVOID_BUFFER_DEG
+    padding, then hand the whole set to ORS in one go.
+    ORS expects [lon, lat] coordinate order (GeoJSON convention).
+    """
+    if not geometries:
+        return None
+
+    polygons = []
+    pad = CLOSURE_AVOID_BUFFER_DEG
+    for geo in geometries:
+        if not geo:
+            continue
+        lats = [p[0] for p in geo]
+        lons = [p[1] for p in geo]
+        ring = [
+            [min(lons) - pad, min(lats) - pad],
+            [max(lons) + pad, min(lats) - pad],
+            [max(lons) + pad, max(lats) + pad],
+            [min(lons) - pad, max(lats) + pad],
+            [min(lons) - pad, min(lats) - pad],   # close the ring
+        ]
+        polygons.append([ring])
+
+    return {"type": "MultiPolygon", "coordinates": polygons} if polygons else None
+
 
 def _parse_datetime(datetime_iso: str) -> datetime:
     try:

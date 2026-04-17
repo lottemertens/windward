@@ -52,3 +52,20 @@ SAMPLE_SPACING_KM       = 5    # target distance between wind samples
 MIN_SAMPLES             = 3    # always at least start, middle, end
 MAX_SAMPLES             = 25   # cap to avoid excessive API calls on very long routes
 MAX_CONCURRENT_REQUESTS = 5    # cap parallel Open-Meteo calls to avoid 429 rate limiting
+
+# --- NDW road closures --------------------------------------------------------
+# The planning feed is 237 MB decompressed. We fetch it once a day and keep
+# only the records we care about (carriagewayClosures within the next 7 days).
+#
+# NDW_NS_* are the XML namespace URIs used in the DATEX II v3 feed.
+# NDW_CLOSURE_TYPE is the management-type value that means "road fully closed"
+# (as opposed to laneClosures, which is a partial restriction we skip).
+
+NDW_PLANNING_URL    = "https://opendata.ndw.nu/planningsfeed_wegwerkzaamheden_en_evenementen.xml.gz"
+NDW_NS_SITUATION    = "http://datex2.eu/schema/3/situation"
+NDW_NS_CONTAINER    = "http://datex2.eu/schema/3/messageContainer"
+NDW_CLOSURE_TYPE    = "carriagewayClosures"
+
+CLOSURE_CACHE_TTL_HOURS  = 23     # refresh the cache if it is older than this
+CLOSURE_MAX_DAYS_AHEAD   = 7      # only show closures starting within this many days
+CLOSURE_AVOID_BUFFER_DEG = 0.0003 # ~33 m padding around a closure bounding box for ORS avoid_polygons
