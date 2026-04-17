@@ -589,6 +589,7 @@ function drawRoute(segments) {
     const pts = segments.flatMap(s => [[s.start.lat, s.start.lon], [s.end.lat, s.end.lon]]);
     map.fitBounds(pts, { padding: [40, 40] });
   }
+  loadAndFilterClosures(segments);
 }
 
 function drawUploadedRoute(waypoints) {
@@ -625,6 +626,7 @@ function clearRoute() {
   lastRouteSegments = [];
   exportBtn.classList.add('hidden');
   clearArrows();
+  clearClosures();
 }
 
 function clearArrows() {
@@ -689,60 +691,83 @@ function pct(count, total) {
 
 
 // ── Road closures ─────────────────────────────────────────────────────────────
+// Closures are only shown after a route is calculated, filtered to those within
+// CLOSURE_BUFFER_M metres of the route. All 8 000+ NL closures are in the
+// server cache; filtering happens here in JS (~5 ms) so no extra API call is
+// needed per route change.
+
+const CLOSURE_BUFFER_M = 10;    // metres from the route line to include a closure
 
 let closureLayers = [];
 
-// Stop-sign icon: red octagon with ✕, rendered as a div so Leaflet puts it in
-// the markerPane (z-index 600 — above route lines, same layer as waypoints).
+// ── Geometry helper ───────────────────────────────────────────────────────────
+// Returns the distance in metres from point p to the line segment a→b.
+// Uses a flat-earth approximation with cosLat correction, accurate enough
+// for the short segments we're dealing with.
+function distPointToSegmentM(p, a, b) {
+  const cosLat = Math.cos(p.lat * Math.PI / 180);
+  const px = (p.lon - a.lon) * cosLat;
+  const py =  p.lat - a.lat;
+  const bx = (b.lon - a.lon) * cosLat;
+  const by =  b.lat - a.lat;
+  const len2 = bx * bx + by * by;
+
+  let t = len2 > 0 ? Math.max(0, Math.min(1, (px * bx + py * by) / len2)) : 0;
+
+  const dx = px - t * bx;
+  const dy = py - t * by;
+  return Math.sqrt(dx * dx + dy * dy) * 111_319;   // degrees → metres
+}
+
+function isClosureOnRoute(closure, segments) {
+  return segments.some(seg =>
+    distPointToSegmentM(
+      { lat: closure.lat, lon: closure.lon },
+      seg.start,
+      seg.end,
+    ) <= CLOSURE_BUFFER_M
+  );
+}
+
+// ── Rendering ─────────────────────────────────────────────────────────────────
+
 function makeClosureIcon() {
   return L.divIcon({
     className: '',
     html: `<div class="closure-marker" title="Road closure">✕</div>`,
-    iconSize:   [22, 22],
-    iconAnchor: [11, 11],
+    iconSize:    [22, 22],
+    iconAnchor:  [11, 11],
     popupAnchor: [0, -12],
   });
 }
 
 function formatClosureDate(iso) {
-  if (!iso) return '?';
-  const d = new Date(iso);
-  return d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' });
+  if (!iso) return 'onbekend';
+  return new Date(iso).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 function closurePopupHtml(c) {
-  const start = formatClosureDate(c.start);
-  const end   = c.end ? formatClosureDate(c.end) : 'onbekend';
-  const desc  = c.description ? `<p class="closure-desc">${c.description}</p>` : '';
+  const desc = c.description ? `<p class="closure-desc">${c.description}</p>` : '';
   return `
     <div class="closure-popup">
       <strong>Weg afgesloten</strong>
       <p class="closure-source">${c.source}</p>
       ${desc}
-      <p class="closure-dates">📅 ${start} – ${end}</p>
+      <p class="closure-dates">📅 ${formatClosureDate(c.start)} – ${formatClosureDate(c.end)}</p>
     </div>`;
 }
 
-async function loadClosures() {
-  try {
-    const res = await fetch('/api/closures');
-    if (!res.ok) return;   // fail silently — closures are best-effort
-    const closures = await res.json();
-    renderClosures(closures);
-  } catch (_) {
-    // Network error — don't break the app
-  }
+function clearClosures() {
+  closureLayers.forEach(l => map.removeLayer(l));
+  closureLayers = [];
 }
 
 function renderClosures(closures) {
-  // Clear any previous closure markers
-  closureLayers.forEach(l => map.removeLayer(l));
-  closureLayers = [];
-
+  clearClosures();
   closures.forEach(c => {
     const marker = L.marker([c.lat, c.lon], {
-      icon:          makeClosureIcon(),
-      zIndexOffset:  500,    // above route lines but below waypoint markers (1000)
+      icon:         makeClosureIcon(),
+      zIndexOffset: 500,   // above route polylines, below waypoint markers (1000)
     });
     marker.bindPopup(closurePopupHtml(c), { maxWidth: 260 });
     marker.addTo(map);
@@ -750,5 +775,15 @@ function renderClosures(closures) {
   });
 }
 
-// Load closures when the map first opens (non-blocking, fail silently)
-loadClosures();
+async function loadAndFilterClosures(segments) {
+  if (!segments.length) return;
+  try {
+    const res = await fetch('/api/closures');
+    if (!res.ok) return;   // fail silently — closures are best-effort
+    const all = await res.json();
+    const onRoute = all.filter(c => isClosureOnRoute(c, segments));
+    renderClosures(onRoute);
+  } catch (_) {
+    // Network error — closures are a nice-to-have, not critical
+  }
+}
