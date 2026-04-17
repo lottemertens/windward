@@ -56,9 +56,15 @@ let lastRouteSegments = [];     // stored after each calculation, used for GPX e
 // avoidedClosures: array of closure objects the user has chosen to avoid.
 // previewLayers:   the proposed reroute polylines shown during preview.
 // previewSegments: the segments of the proposed reroute (needed for closure filtering).
+// previewArrows:   wind_arrows for the proposed reroute (drawn on Accept).
+// allClosuresCache: session-level cache of the full /api/closures response.
+//   Populated on page load (background pre-warm) and reused on every route.
+//   No need to persist across page reloads — the server refreshes daily.
 let avoidedClosures  = [];
 let previewLayers    = [];
 let previewSegments  = [];
+let previewArrows    = [];
+let allClosuresCache = null;
 
 // Default datetime to current time rounded to the nearest hour
 const now = new Date();
@@ -124,7 +130,12 @@ datetimeInput.addEventListener('change', fetchWindOverview);
 // Warm the closure cache silently on page load. The NDW feed takes ~25 s to
 // fetch and parse on the first request; doing it now means closures appear
 // immediately after the first route calculation instead of after a long wait.
-fetch('/api/closures').catch(() => {});
+// We also store the result in allClosuresCache so subsequent calls (e.g. after
+// accepting a reroute) don't re-fetch and lose the data.
+fetch('/api/closures')
+  .then(r => r.ok ? r.json() : Promise.reject())
+  .then(data => { allClosuresCache = data; })
+  .catch(() => {});
 
 
 // ── Tab switching ─────────────────────────────────────────────────────
@@ -485,6 +496,7 @@ async function avoidClosure(closure) {
 
     // Draw proposed reroute on top
     previewSegments = data.segments;
+    previewArrows   = data.wind_arrows;
     previewLayers = _drawSegmentPolylines(data.segments, 0.9);
 
     rerouteBar.classList.remove('hidden');
@@ -503,15 +515,19 @@ function acceptPreview() {
   // Remove ghost route and arrows, make preview the new main route
   routeLayers.forEach(l => map.removeLayer(l));
   arrowLayers.forEach(l => map.removeLayer(l));
-  routeLayers  = previewLayers;
-  arrowLayers  = [];
-  previewLayers   = [];
+  routeLayers       = previewLayers;
+  arrowLayers       = [];
+  previewLayers     = [];
   lastRouteSegments = previewSegments;
-  previewSegments  = [];
+  previewSegments   = [];
+
+  // Draw the wind arrows that were fetched for the preview route
+  drawWindArrows(previewArrows);
+  previewArrows = [];
 
   rerouteBar.classList.add('hidden');
 
-  // Recalculate closures on the new route
+  // Refilter closures using the cached data — no re-fetch needed
   loadAndFilterClosures(lastRouteSegments);
   showSummary(lastRouteSegments);
 }
@@ -521,8 +537,9 @@ function discardPreview() {
 
   // Remove the preview route
   previewLayers.forEach(l => map.removeLayer(l));
-  previewLayers  = [];
+  previewLayers   = [];
   previewSegments = [];
+  previewArrows   = [];
 
   // Remove the closure we just added and restore route opacity
   avoidedClosures.pop();
@@ -545,9 +562,10 @@ async function avoidAllClosures() {
   setLoading(true);
   try {
     const data = await _fetchRoute(avoidedClosures.map(c => c.geometry));
-    routeLayers.forEach(l => l.setStyle({ opacity: 0.2, weight: 4 }));
-    arrowLayers.forEach(l => l.setOpacity(0.2));
+    routeLayers.forEach(l => l.setStyle({ opacity: GHOST_ROUTE_OPACITY, weight: 5 }));
+    arrowLayers.forEach(l => l.setOpacity(GHOST_ARROW_OPACITY));
     previewSegments = data.segments;
+    previewArrows   = data.wind_arrows;
     previewLayers = _drawSegmentPolylines(data.segments, 0.9);
     rerouteBar.classList.add('hidden'); // will re-show below
     rerouteBar.classList.remove('hidden');
@@ -972,10 +990,14 @@ function renderClosures(closures) {
 async function loadAndFilterClosures(segments) {
   if (!segments.length) return;
   try {
-    const res = await fetch('/api/closures');
-    if (!res.ok) return;
-    const all = await res.json();
-    const onRoute = all.filter(c => isClosureOnRoute(c, segments));
+    // Use the session cache if available — avoids a re-fetch after accepting a
+    // reroute and prevents closures from flickering off then (maybe) back on.
+    if (!allClosuresCache) {
+      const res = await fetch('/api/closures');
+      if (!res.ok) return;
+      allClosuresCache = await res.json();
+    }
+    const onRoute = allClosuresCache.filter(c => isClosureOnRoute(c, segments));
     renderClosures(onRoute);
   } catch (_) {
     // Network error — closures are best-effort
