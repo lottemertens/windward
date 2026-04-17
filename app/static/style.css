@@ -148,6 +148,13 @@ button {
 #address-results li:last-child { border-bottom: none; }
 #address-results li:hover { background: var(--bg); }
 
+/* ── Plan / Upload tab panels ────────────────────────────────────────── */
+#panel-plan, #panel-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 /* ── Bike type toggle ────────────────────────────────────────────────── */
 .bike-toggle {
   display: flex;
