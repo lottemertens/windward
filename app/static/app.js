@@ -324,8 +324,9 @@ function refreshMarkerLabels() {
  */
 function makePlanMarker(lat, lng, type) {
   const marker = L.marker([lat, lng], {
-    icon:      makePlanIcon(type, ''),   // label set immediately by refreshMarkerLabels()
-    draggable: true,
+    icon:          makePlanIcon(type, ''),   // label set immediately by refreshMarkerLabels()
+    draggable:     true,
+    zIndexOffset:  1000,   // always above wind arrow markers
   }).addTo(map);
 
   // Update coordinates and recalculate when the marker is dragged to a new position.
