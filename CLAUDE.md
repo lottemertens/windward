@@ -52,7 +52,7 @@ KomootLayer/
 - `src/analysis/` is pure Python with no HTTP calls — making it trivial to test.
 - `app/main.py` is the only place that wires modules together and calls the API.
 - Frontend (`app/static/`) talks to the backend only via `POST /api/route`.
-- **All constants live in `src/config.py`** — never define magic numbers or configuration values inline in module files. API URLs, tuning parameters, thresholds — all go in config.
+- **All constants live in `src/config.py`** (Python) or the constants section at the top of `app/static/app.js` (frontend). Never define magic numbers or configuration values inline — not in module files, not buried in functions, not in the middle of a class. API URLs, tuning parameters, thresholds, buffer sizes — all go in the appropriate config location.
 
 ### Data flow
 ```

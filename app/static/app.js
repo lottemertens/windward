@@ -54,8 +54,9 @@ now.setMinutes(0, 0, 0);
 datetimeInput.value = now.toISOString().slice(0, 16);
 
 
-// ── Colour scale ──────────────────────────────────────────────────────
-const HEADWIND_SCALE = 5.0;
+// ── Constants ─────────────────────────────────────────────────────────
+const HEADWIND_SCALE    = 5.0;   // m/s — mirrors HEADWIND_SCALE_MS in config.py
+const CLOSURE_BUFFER_M  = 10;    // metres from route line to include a road closure
 
 function windColour(headwindMs) {
   const t = Math.max(-1, Math.min(1, headwindMs / HEADWIND_SCALE));
@@ -695,8 +696,6 @@ function pct(count, total) {
 // CLOSURE_BUFFER_M metres of the route. All 8 000+ NL closures are in the
 // server cache; filtering happens here in JS (~5 ms) so no extra API call is
 // needed per route change.
-
-const CLOSURE_BUFFER_M = 10;    // metres from the route line to include a closure
 
 let closureLayers = [];
 
