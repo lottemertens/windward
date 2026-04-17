@@ -9,17 +9,10 @@ everywhere that uses it.
 # --- OpenRouteService (ORS) -----------------------------------------------
 
 ORS_BASE_URL             = "https://api.openrouteservice.org/v2/directions"
+ORS_GEOCODE_URL          = "https://api.openrouteservice.org/geocode/search"
 CYCLING_PROFILE_ROAD     = "cycling-road"      # road bike — avoids unpaved surfaces
 CYCLING_PROFILE_REGULAR  = "cycling-regular"   # regular bike — accepts unpaved
 CYCLING_PROFILE_DEFAULT  = CYCLING_PROFILE_ROAD
-
-# --- Nominatim geocoder (address search) ----------------------------------
-# Free, no API key required. Dutch addresses only (countrycodes=nl).
-# Rate limit: 1 req/s — our 300 ms frontend debounce keeps us well under that.
-# Must send a descriptive User-Agent per Nominatim usage policy.
-
-NOMINATIM_URL        = "https://nominatim.openstreetmap.org/search"
-NOMINATIM_USER_AGENT = "Windward/1.0 (https://windward-odgb.onrender.com)"
 
 # --- Open-Meteo ------------------------------------------------------------
 

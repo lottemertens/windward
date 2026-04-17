@@ -31,7 +31,7 @@ from src.analysis.wind_analysis import analyse_route_wind, generate_display_arro
 from src.gpx_parser import parse_gpx
 from src.geo import route_distance_km
 from src.models import Coordinate
-from src.config import DEFAULT_LOCATION_LAT, DEFAULT_LOCATION_LON, DEFAULT_LOCATION_NAME, CYCLING_PROFILE_ROAD, CYCLING_PROFILE_REGULAR, NOMINATIM_URL, NOMINATIM_USER_AGENT, CLOSURE_AVOID_BUFFER_DEG
+from src.config import DEFAULT_LOCATION_LAT, DEFAULT_LOCATION_LON, DEFAULT_LOCATION_NAME, CYCLING_PROFILE_ROAD, CYCLING_PROFILE_REGULAR, ORS_GEOCODE_URL, CLOSURE_AVOID_BUFFER_DEG
 from src.closures.ndw_client import get_closures, force_refresh
 
 load_dotenv()
@@ -67,7 +67,7 @@ class RouteInfoModel(BaseModel):
     warnings:    list[str]            # empty for uploaded routes
 
 
-# --- /api/geocode  (address search via Nominatim) -------------------------
+# --- /api/geocode  (address search via ORS) --------------------------------
 
 class GeocodeSuggestion(BaseModel):
     name:     str    # short display name shown in the dropdown
@@ -77,36 +77,40 @@ class GeocodeSuggestion(BaseModel):
 
 @app.get("/api/geocode", response_model=list[GeocodeSuggestion])
 async def geocode(q: str):
-    """Search for a Dutch address using the Nominatim geocoder."""
+    """Search for a Dutch address using the ORS geocoder."""
     if len(q.strip()) < 3:
         return []
-    async with httpx.AsyncClient() as client:
-        res = await client.get(
-            NOMINATIM_URL,
-            params={
-                "q":            q,
-                "countrycodes": "nl",
-                "format":       "jsonv2",
-                "limit":        5,
-                "addressdetails": 1,
-            },
-            headers={
-                "User-Agent":      NOMINATIM_USER_AGENT,
-                "Accept-Language": "nl",   # prefer Dutch place names
-            },
-            timeout=5.0,
-        )
-        res.raise_for_status()
+    api_key = os.getenv("ORS_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ORS_API_KEY is not set")
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.get(
+                ORS_GEOCODE_URL,
+                params={
+                    "api_key":          api_key,
+                    "text":             q,
+                    "boundary.country": "NLD",
+                    "size":             5,
+                },
+                timeout=5.0,
+            )
+            res.raise_for_status()
+    except httpx.HTTPStatusError:
+        return []   # geocoder unavailable — return empty rather than 500
+    features = res.json().get("features", [])
     suggestions = []
-    for f in res.json():
-        full = f.get("display_name", "")
-        # Short name: first segment of display_name, e.g. "Nieuwe Prinsengracht"
-        name = full.split(",")[0].strip()
+    for f in features:
+        props = f["properties"]
+        lon, lat = f["geometry"]["coordinates"]
+        name     = props.get("name", "")
+        locality = props.get("locality", "")
+        short    = f"{name}, {locality}" if locality and locality != name else name
         suggestions.append(GeocodeSuggestion(
-            name=name,
-            full=full,
-            lat=float(f["lat"]),
-            lon=float(f["lon"]),
+            name=short or props.get("label", ""),
+            full=props.get("label", ""),
+            lat=lat,
+            lon=lon,
         ))
     return suggestions
 
