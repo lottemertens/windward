@@ -4,6 +4,8 @@ NDW road closures client.
 Fetches the NDW planning feed (road works + events) once per day and caches
 the filtered result in memory. The raw feed is 237 MB decompressed, so we:
   - Stream-parse with iterparse (never load the full tree into memory)
+  - Parse at situation level so header metadata (project name, warning, URL)
+    can be combined with the individual closure records inside that situation
   - Keep only carriagewayClosures active within the next 7 days
   - Store a small list of ClosureRecords — typically a few thousand for all NL
 
@@ -97,8 +99,13 @@ async def _download() -> bytes:
 
 def _parse(xml_bytes: bytes) -> list[ClosureRecord]:
     """
-    Stream-parse the DATEX II v3 XML and return only carriagewayClosures that
-    are active within the next CLOSURE_MAX_DAYS_AHEAD days.
+    Stream-parse the DATEX II v3 XML, working at situation level.
+
+    Each <situation> groups all records for one works project. The first record
+    is a "header" with the project name, a plain-Dutch warning, and sometimes a
+    URL. The remaining records are the individual measures (closures, access
+    rules, etc.). We parse header + closures together so the richer metadata is
+    available on every ClosureRecord.
 
     We use iterparse so the full 237 MB tree is never held in memory — each
     <situation> element is processed and immediately discarded.
@@ -113,8 +120,22 @@ def _parse(xml_bytes: bytes) -> list[ClosureRecord]:
         if elem.tag.split("}")[-1] != "situation":
             continue
 
-        for rec in elem.findall(f"{{{NDW_NS_SITUATION}}}situationRecord"):
-            closure = _extract_closure(rec, today, cutoff)
+        records = elem.findall(f"{{{NDW_NS_SITUATION}}}situationRecord")
+        if not records:
+            elem.clear()
+            continue
+
+        # ── Extract header metadata from the first record ──────────────────
+        # The first record is always the "umbrella" roadworks record that holds
+        # the project name, warning text, and optional URL for the whole situation.
+        header       = records[0]
+        project_name = _comment_text(header, "internalNote")
+        warning      = _comment_text(header, "warning")
+        url          = _find_text(header, "urlLinkAddress")
+
+        # ── Extract closure records from the rest ──────────────────────────
+        for rec in records[1:]:
+            closure = _extract_closure(rec, today, cutoff, project_name, warning, url)
             if closure:
                 results.append(closure)
 
@@ -123,7 +144,14 @@ def _parse(xml_bytes: bytes) -> list[ClosureRecord]:
     return results
 
 
-def _extract_closure(rec: ET.Element, today: date, cutoff: date) -> Optional[ClosureRecord]:
+def _extract_closure(
+    rec: ET.Element,
+    today: date,
+    cutoff: date,
+    project_name: Optional[str],
+    warning: Optional[str],
+    url: Optional[str],
+) -> Optional[ClosureRecord]:
     """
     Return a ClosureRecord if this record is a full carriagewayClosures that
     overlaps [today, cutoff]. Otherwise return None.
@@ -143,28 +171,33 @@ def _extract_closure(rec: ET.Element, today: date, cutoff: date) -> Optional[Clo
     if end_d < today or start_d > cutoff:
         return None
 
-    # ── Coordinates ────────────────────────────────────────────────────────
+    # ── Road geometry ──────────────────────────────────────────────────────
+    # The posList contains the full shape of the closed road section as a
+    # sequence of "lat lon lat lon …" pairs. We keep all of them so the
+    # frontend can draw an accurate highlight on the map.
     pos_elem = _find(rec, "posList")
     if pos_elem is None or not pos_elem.text:
         return None
-    coords = pos_elem.text.split()
-    if len(coords) < 2:
+
+    geometry = _parse_pos_list(pos_elem.text)
+    if not geometry:
         return None
-    try:
-        lat, lon = float(coords[0]), float(coords[1])
-    except ValueError:
-        return None
+
+    lat, lon = geometry[0]   # marker placed at the start of the closure
 
     # ── Source (road manager) ──────────────────────────────────────────────
     source_elem = _find(rec, "value")
     source = source_elem.text.strip() if source_elem is not None else "unknown"
 
-    # ── Human-readable description ─────────────────────────────────────────
-    # The feed stores descriptions as multiple <value> elements. We grab any
-    # text that looks like a description (> 5 chars, not the source name itself).
+    # ── Description ────────────────────────────────────────────────────────
+    # Collect any value text that looks like a human note (not the source name).
     all_values = [e.text.strip() for e in rec.iter() if e.tag.split("}")[-1] == "value" and e.text]
     desc_parts = [v for v in all_values if len(v) > 5 and v != source]
-    description = "; ".join(dict.fromkeys(desc_parts))[:200]  # deduplicate, cap length
+    description = "; ".join(dict.fromkeys(desc_parts))[:200] or None
+
+    # ── Bicycle-specific flag ──────────────────────────────────────────────
+    vehicle_type = _find_text(rec, "vehicleType")
+    bicycle_specific = vehicle_type == "bicycle"
 
     return ClosureRecord(
         lat=lat,
@@ -172,7 +205,12 @@ def _extract_closure(rec: ET.Element, today: date, cutoff: date) -> Optional[Clo
         source=source,
         start=start_d.isoformat(),
         end=end_d.isoformat() if end_d != date.max else None,
-        description=description or None,
+        description=description,
+        geometry=geometry,
+        warning=warning,
+        project_name=project_name,
+        url=url,
+        bicycle_specific=bicycle_specific,
     )
 
 
@@ -184,6 +222,42 @@ def _find(elem: ET.Element, local_name: str) -> Optional[ET.Element]:
         if child.tag.split("}")[-1] == local_name:
             return child
     return None
+
+
+def _find_text(elem: ET.Element, local_name: str) -> Optional[str]:
+    """Find first descendant by local tag name and return its text, or None."""
+    found = _find(elem, local_name)
+    return found.text.strip() if found is not None and found.text else None
+
+
+def _comment_text(elem: ET.Element, comment_type: str) -> Optional[str]:
+    """
+    Find a <generalPublicComment> with the given commentType and return its
+    <value> text. The NDW feed stores the project name as commentType=internalNote
+    and the plain-Dutch warning as commentType=warning.
+    """
+    for comment_block in elem.iter():
+        if comment_block.tag.split("}")[-1] != "generalPublicComment":
+            continue
+        ct = _find_text(comment_block, "commentType")
+        if ct == comment_type:
+            return _find_text(comment_block, "value")
+    return None
+
+
+def _parse_pos_list(text: str) -> list:
+    """
+    Parse a DATEX II posList string ("lat lon lat lon …") into a list of
+    [lat, lon] pairs. Skips malformed values silently.
+    """
+    parts = text.split()
+    result = []
+    for i in range(0, len(parts) - 1, 2):
+        try:
+            result.append([float(parts[i]), float(parts[i + 1])])
+        except ValueError:
+            continue
+    return result
 
 
 def _parse_date(text: str) -> date:

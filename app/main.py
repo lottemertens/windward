@@ -251,12 +251,17 @@ async def calculate_wind_overlay(request: WindOverlayRequest):
 # --- /api/closures  (cached NDW road closures) ----------------------------
 
 class ClosureModel(BaseModel):
-    lat:         float
-    lon:         float
-    source:      str
-    start:       str
-    end:         Optional[str] = None
-    description: Optional[str] = None
+    lat:              float
+    lon:              float
+    source:           str
+    start:            str
+    end:              Optional[str] = None
+    description:      Optional[str] = None
+    geometry:         list          = []   # [[lat, lon], …] for map highlight
+    warning:          Optional[str] = None # plain-Dutch summary, e.g. "Weg dicht in één richting"
+    project_name:     Optional[str] = None
+    url:              Optional[str] = None
+    bicycle_specific: bool          = False
 
 @app.get("/api/closures", response_model=list[ClosureModel])
 async def list_closures():
@@ -270,9 +275,13 @@ async def list_closures():
         records = await get_closures()
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not fetch NDW data: {e}")
-    return [ClosureModel(lat=r.lat, lon=r.lon, source=r.source,
-                         start=r.start, end=r.end, description=r.description)
-            for r in records]
+    return [ClosureModel(
+                lat=r.lat, lon=r.lon, source=r.source,
+                start=r.start, end=r.end, description=r.description,
+                geometry=r.geometry, warning=r.warning,
+                project_name=r.project_name, url=r.url,
+                bicycle_specific=r.bicycle_specific,
+            ) for r in records]
 
 
 @app.post("/api/refresh-closures")

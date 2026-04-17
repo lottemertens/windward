@@ -746,17 +746,34 @@ function formatClosureDate(iso) {
 }
 
 function closurePopupHtml(c) {
-  const desc = c.description ? `<p class="closure-desc">${c.description}</p>` : '';
+  const bikeTag  = c.bicycle_specific
+    ? `<span class="closure-tag closure-tag-bike">🚲 fietsers</span>` : '';
+  const warning  = c.warning
+    ? `<p class="closure-warning">${c.warning}</p>` : '';
+  const name     = c.project_name
+    ? `<p class="closure-project">${c.project_name}</p>` : '';
+  const urlLink  = c.url
+    ? `<p class="closure-url"><a href="${c.url}" target="_blank" rel="noopener">Meer info ↗</a></p>` : '';
+
   return `
     <div class="closure-popup">
-      <strong>Weg afgesloten</strong>
+      <strong>Weg afgesloten ${bikeTag}</strong>
+      ${warning}
       <p class="closure-source">${c.source}</p>
-      ${desc}
+      ${name}
+      ${urlLink}
       <p class="closure-dates">📅 ${formatClosureDate(c.start)} – ${formatClosureDate(c.end)}</p>
     </div>`;
 }
 
+let closureHighlight = null;   // the currently drawn road geometry highlight
+
+function clearClosureHighlight() {
+  if (closureHighlight) { map.removeLayer(closureHighlight); closureHighlight = null; }
+}
+
 function clearClosures() {
+  clearClosureHighlight();
   closureLayers.forEach(l => map.removeLayer(l));
   closureLayers = [];
 }
@@ -768,7 +785,22 @@ function renderClosures(closures) {
       icon:         makeClosureIcon(),
       zIndexOffset: 500,   // above route polylines, below waypoint markers (1000)
     });
-    marker.bindPopup(closurePopupHtml(c), { maxWidth: 260 });
+    marker.bindPopup(closurePopupHtml(c), { maxWidth: 280 });
+
+    // Draw the full road geometry when the popup opens, remove when it closes
+    if (c.geometry && c.geometry.length > 1) {
+      marker.on('popupopen', () => {
+        clearClosureHighlight();
+        closureHighlight = L.polyline(c.geometry, {
+          color:   '#dc2626',
+          weight:  7,
+          opacity: 0.85,
+          dashArray: '10, 6',
+        }).addTo(map);
+      });
+      marker.on('popupclose', clearClosureHighlight);
+    }
+
     marker.addTo(map);
     closureLayers.push(marker);
   });
