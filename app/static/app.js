@@ -85,6 +85,20 @@ function windColour(headwindMs) {
 }
 
 
+// ── API error helper ──────────────────────────────────────────────────
+// Safely extract an error message from a non-OK response. If the body
+// isn't valid JSON (e.g. a 503 HTML page from Render during cold start),
+// fall back to a plain HTTP status string instead of crashing.
+async function apiError(res) {
+  try {
+    const e = await res.json();
+    return new Error(e.detail || `Server error ${res.status}`);
+  } catch {
+    return new Error(`Server error ${res.status}`);
+  }
+}
+
+
 // ── Wind overview ─────────────────────────────────────────────────────
 async function fetchWindOverview() {
   const datetime = datetimeInput.value + ':00';
@@ -97,7 +111,7 @@ async function fetchWindOverview() {
 
   try {
     const res  = await fetch(`/api/wind?datetime_iso=${encodeURIComponent(datetime)}`);
-    if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
+    if (!res.ok) throw await apiError(res);
     renderWindWidget(await res.json());
   } catch (err) {
     windCompass.innerHTML = '';
@@ -453,7 +467,7 @@ async function _fetchRoute(avoidGeometries = []) {
       avoid_geometries: avoidGeometries,
     }),
   });
-  if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
+  if (!res.ok) throw await apiError(res);
   return res.json();
 }
 
@@ -614,7 +628,7 @@ uploadBtn.addEventListener('click', async () => {
 
   try {
     const res = await fetch('/api/upload', { method: 'POST', body: formData });
-    if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
+    if (!res.ok) throw await apiError(res);
     const data = await res.json();
 
     uploadedWaypoints = data.waypoints;
@@ -647,7 +661,7 @@ windBtn.addEventListener('click', async () => {
         datetime_iso: datetimeInput.value + ':00',
       }),
     });
-    if (!res.ok) { const e = await res.json(); throw new Error(e.detail); }
+    if (!res.ok) throw await apiError(res);
     const data = await res.json();
 
     drawRoute(data.segments);
