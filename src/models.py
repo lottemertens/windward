@@ -34,14 +34,15 @@ class SegmentWind:
 
 @dataclass
 class ClosureRecord:
-    lat:              float
+    situation_id:     str            # stable ID for tracking avoided closures (one per situation)
+    lat:              float          # marker position — centroid of the closure geometry
     lon:              float
     source:           str            # road manager, e.g. "Gemeente Waterland"
     start:            str            # ISO date string, e.g. "2026-04-12"
     end:              Optional[str]  # ISO date string, or None if open-ended
     description:      Optional[str]  # free-text from the NDW feed, or None
-    geometry:         list           # [[lat, lon], …] — full road geometry for map highlight
+    geometry:         list           # [[lat, lon], …] — combined geometry of all closure segments
     warning:          Optional[str]  # plain-Dutch closure summary, e.g. "Weg dicht in één richting"
     project_name:     Optional[str]  # project name from the header record
     url:              Optional[str]  # link to project page, if provided
-    bicycle_specific: bool           # True if the closure explicitly targets cyclists
+    bicycle_specific: bool           # True if any closure record explicitly targets cyclists

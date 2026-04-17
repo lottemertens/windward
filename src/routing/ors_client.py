@@ -7,8 +7,11 @@ and return waypoints plus route metadata (surface types, warnings).
 ORS docs: https://openrouteservice.org/dev/#/api-docs/v2/directions/{profile}/post
 """
 
+from __future__ import annotations
+
 import httpx
 from dataclasses import dataclass, field
+from typing import Optional
 
 from src.models import Coordinate
 from src.config import ORS_BASE_URL, CYCLING_PROFILE_DEFAULT
@@ -57,6 +60,7 @@ async def get_cycling_route(
     waypoints: list[Coordinate],
     api_key: str,
     profile: str = CYCLING_PROFILE_DEFAULT,
+    avoid_polygons: Optional[dict] = None,
 ) -> OrsRouteResult:
     """
     Request a cycling route from ORS through two or more waypoints.
@@ -80,6 +84,8 @@ async def get_cycling_route(
         "coordinates": [[w.lon, w.lat] for w in waypoints],
         "extra_info": ["surface"],
     }
+    if avoid_polygons:
+        body["options"] = {"avoid_polygons": avoid_polygons}
 
     headers = {
         "Authorization": api_key,
