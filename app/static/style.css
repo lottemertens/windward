@@ -109,6 +109,33 @@ button {
   gap: 6px;
 }
 
+/* ── Riding speed input ──────────────────────────────────────────────── */
+.speed-row { display: flex; flex-direction: column; gap: 4px; }
+.speed-row label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+}
+.speed-input-wrap { display: flex; align-items: center; gap: 6px; }
+#speed-input {
+  width: 72px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 0.9rem;
+  color: var(--text);
+  background: #f5f7fb;
+  outline: none;
+  -moz-appearance: textfield;   /* hide spin arrows in Firefox */
+}
+#speed-input::-webkit-outer-spin-button,
+#speed-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+#speed-input:focus { border-color: var(--accent); background: #fff; }
+.speed-unit { font-size: 0.85rem; color: var(--muted); }
+.speed-hint { font-size: 0.74rem; color: var(--muted); line-height: 1.4; }
+
 /* ── Address search ──────────────────────────────────────────────────── */
 .address-search { position: relative; }
 

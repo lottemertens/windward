@@ -42,6 +42,14 @@
           <button class="bike-btn active" id="btn-road">Road bike</button>
           <button class="bike-btn"        id="btn-regular">Regular bike</button>
         </div>
+        <div class="speed-row">
+          <label for="speed-input">Riding speed</label>
+          <div class="speed-input-wrap">
+            <input type="number" id="speed-input" min="5" max="60" step="1" value="25" />
+            <span class="speed-unit">km/h</span>
+          </div>
+          <p class="speed-hint">Clear to use static wind (best for short rides)</p>
+        </div>
         <div class="address-search">
           <input type="text" id="address-input" placeholder="Search address…" autocomplete="off" />
           <ul id="address-results" class="hidden"></ul>

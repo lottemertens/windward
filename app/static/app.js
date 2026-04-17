@@ -32,6 +32,7 @@ const windBtn    = document.getElementById('wind-btn');
 const exportBtn  = document.getElementById('export-btn');
 const btnRoad           = document.getElementById('btn-road');
 const btnRegular        = document.getElementById('btn-regular');
+const speedInput        = document.getElementById('speed-input');
 const addressInput      = document.getElementById('address-input');
 const addressResults    = document.getElementById('address-results');
 const rerouteBar        = document.getElementById('reroute-bar');
@@ -79,6 +80,8 @@ const HEADWIND_SCALE         = 5.0;   // m/s — mirrors HEADWIND_SCALE_MS in co
 const CLOSURE_BUFFER_M       = 10;    // metres from route line to include a road closure
 const GHOST_ROUTE_OPACITY    = 0.40;  // opacity of the old route during reroute preview
 const GHOST_ARROW_OPACITY    = 0.25;  // arrows are less important so fade them more
+const DEFAULT_SPEED_ROAD     = 25;    // km/h — mirrors DEFAULT_SPEED_ROAD_KMH in config.py
+const DEFAULT_SPEED_REGULAR  = 20;    // km/h — mirrors DEFAULT_SPEED_REGULAR_KMH in config.py
 
 function windColour(headwindMs) {
   const t = Math.max(-1, Math.min(1, headwindMs / HEADWIND_SCALE));
@@ -263,10 +266,16 @@ function selectAddress(lat, lng, label) {
 
 
 // ── Bike type toggle ──────────────────────────────────────────────────
+// When switching bike type, update the speed default — but only if the
+// current value matches the other type's default (i.e. the user hasn't
+// manually overridden it).
 btnRoad.addEventListener('click', () => {
   selectedProfile = 'cycling-road';
   btnRoad.classList.add('active');
   btnRegular.classList.remove('active');
+  if (speedInput.value === String(DEFAULT_SPEED_REGULAR) || speedInput.value === '') {
+    speedInput.value = DEFAULT_SPEED_ROAD;
+  }
   if (planPoints.length >= 2) calculateOrsRoute();
 });
 
@@ -274,6 +283,9 @@ btnRegular.addEventListener('click', () => {
   selectedProfile = 'cycling-regular';
   btnRegular.classList.add('active');
   btnRoad.classList.remove('active');
+  if (speedInput.value === String(DEFAULT_SPEED_ROAD) || speedInput.value === '') {
+    speedInput.value = DEFAULT_SPEED_REGULAR;
+  }
   if (planPoints.length >= 2) calculateOrsRoute();
 });
 
@@ -476,6 +488,7 @@ async function _fetchRoute(avoidGeometries = []) {
       datetime_iso:     datetimeInput.value + ':00',
       profile:          selectedProfile,
       avoid_geometries: avoidGeometries,
+      speed_kmh:        speedInput.value ? parseFloat(speedInput.value) : null,
     }),
   });
   if (!res.ok) throw await apiError(res);
@@ -670,6 +683,7 @@ windBtn.addEventListener('click', async () => {
       body: JSON.stringify({
         waypoints:    uploadedWaypoints,
         datetime_iso: datetimeInput.value + ':00',
+        speed_kmh:    speedInput.value ? parseFloat(speedInput.value) : null,
       }),
     });
     if (!res.ok) throw await apiError(res);

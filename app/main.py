@@ -26,7 +26,7 @@ from pydantic import BaseModel
 import httpx
 
 from src.routing.ors_client import get_cycling_route
-from src.weather.wind_client import get_wind_along_route, get_wind_at
+from src.weather.wind_client import get_wind_along_route, get_wind_along_route_timed, get_wind_at
 from src.analysis.wind_analysis import analyse_route_wind, generate_display_arrows
 from src.gpx_parser import parse_gpx
 from src.geo import route_distance_km
@@ -142,8 +142,9 @@ async def get_wind_overview(datetime_iso: str):
 class RouteRequest(BaseModel):
     waypoints:        list[WaypointModel]   # [start, optional via points..., end]
     datetime_iso:     str
-    profile:          str  = CYCLING_PROFILE_ROAD
-    avoid_geometries: list = []             # list of [[lat,lon],...] closure geometries to avoid
+    profile:          str            = CYCLING_PROFILE_ROAD
+    avoid_geometries: list           = []   # list of [[lat,lon],...] closure geometries to avoid
+    speed_kmh:        Optional[float] = None  # if set, use time-dependent wind calculation
 
 class RouteResponse(BaseModel):
     segments:    list[SegmentModel]
@@ -179,6 +180,7 @@ async def calculate_route(request: RouteRequest):
     return await _build_route_response(
         waypoints=result.waypoints,
         at=at,
+        speed_kmh=request.speed_kmh,
         distance_km=round(route_distance_km(result.waypoints), 2),
         surfaces=[SurfaceModel(name=s.name, distance_km=s.distance_km, percentage=s.percentage)
                   for s in result.surfaces],
@@ -219,6 +221,7 @@ async def upload_gpx(file: UploadFile = File(...)):
 class WindOverlayRequest(BaseModel):
     waypoints:    list[WaypointModel]
     datetime_iso: str
+    speed_kmh:    Optional[float] = None  # if set, use time-dependent wind calculation
 
 class WindOverlayResponse(BaseModel):
     segments:    list[SegmentModel]
@@ -231,7 +234,11 @@ async def calculate_wind_overlay(request: WindOverlayRequest):
     waypoints = [Coordinate(lat=w.lat, lon=w.lon) for w in request.waypoints]
 
     try:
-        wind_samples   = await get_wind_along_route(waypoints, at)
+        wind_samples = (
+            await get_wind_along_route_timed(waypoints, at, request.speed_kmh)
+            if request.speed_kmh
+            else await get_wind_along_route(waypoints, at)
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -358,9 +365,14 @@ async def _build_route_response(
     distance_km: float,
     surfaces: list[SurfaceModel],
     warnings: list[str],
+    speed_kmh: Optional[float] = None,
 ) -> RouteResponse:
     try:
-        wind_samples   = await get_wind_along_route(waypoints, at)
+        wind_samples = (
+            await get_wind_along_route_timed(waypoints, at, speed_kmh)
+            if speed_kmh
+            else await get_wind_along_route(waypoints, at)
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

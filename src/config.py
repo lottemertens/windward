@@ -27,6 +27,21 @@ DEFAULT_LOCATION_LAT  = 52.37
 DEFAULT_LOCATION_LON  = 4.89
 DEFAULT_LOCATION_NAME = "Amsterdam"
 
+# --- Riding speed and time-dependent wind ---------------------------------
+# Used when the user provides their expected speed. The system estimates
+# arrival time at each sample point and interpolates the wind forecast for
+# that specific moment in time instead of using a single departure-time
+# snapshot. Optional — if no speed is given, static wind is used.
+#
+# SPEED_HEADWIND_FACTOR: m/s of speed lost per m/s of headwind.
+#   0.5 means a 10 m/s headwind costs 5 m/s (18 km/h) of effective speed.
+# MIN_SPEED_KMH: floor speed so the model never gives absurd values.
+
+DEFAULT_SPEED_ROAD_KMH    = 25
+DEFAULT_SPEED_REGULAR_KMH = 20
+SPEED_HEADWIND_FACTOR     = 0.5
+MIN_SPEED_KMH             = 8
+
 # --- Wind arrow display ---------------------------------------------------
 # Arrows are shown every ARROW_SPACING_KM along the route, independent of
 # how many wind samples were fetched. More frequent than samples is fine
