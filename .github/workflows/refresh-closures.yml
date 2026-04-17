@@ -16,7 +16,7 @@ name: Refresh road closure cache
 
 on:
   schedule:
-    - cron: '0 6 * * *'   # 06:00 UTC = 08:00 Amsterdam (07:00 in winter)
+    - cron: '0 5 * * *'   # 05:00 UTC = 07:00 Amsterdam (06:00 in winter)
   workflow_dispatch:        # also lets you trigger it manually from the GitHub UI
 
 jobs:
