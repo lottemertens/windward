@@ -67,8 +67,10 @@ datetimeInput.value = now.toISOString().slice(0, 16);
 
 
 // ── Constants ─────────────────────────────────────────────────────────
-const HEADWIND_SCALE    = 5.0;   // m/s — mirrors HEADWIND_SCALE_MS in config.py
-const CLOSURE_BUFFER_M  = 10;    // metres from route line to include a road closure
+const HEADWIND_SCALE         = 5.0;   // m/s — mirrors HEADWIND_SCALE_MS in config.py
+const CLOSURE_BUFFER_M       = 10;    // metres from route line to include a road closure
+const GHOST_ROUTE_OPACITY    = 0.40;  // opacity of the old route during reroute preview
+const GHOST_ARROW_OPACITY    = 0.25;  // arrows are less important so fade them more
 
 function windColour(headwindMs) {
   const t = Math.max(-1, Math.min(1, headwindMs / HEADWIND_SCALE));
@@ -478,8 +480,8 @@ async function avoidClosure(closure) {
     const data = await _fetchRoute(avoidedClosures.map(c => c.geometry));
 
     // Fade the current route so the user can compare
-    routeLayers.forEach(l => l.setStyle({ opacity: 0.2, weight: 4 }));
-    arrowLayers.forEach(l => l.setOpacity(0.2));
+    routeLayers.forEach(l => l.setStyle({ opacity: GHOST_ROUTE_OPACITY, weight: 5 }));
+    arrowLayers.forEach(l => l.setOpacity(GHOST_ARROW_OPACITY));
 
     // Draw proposed reroute on top
     previewSegments = data.segments;
