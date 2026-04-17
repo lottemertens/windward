@@ -376,6 +376,29 @@ button {
 /* ── Leaflet overrides ────────────────────────────────────────────────── */
 .wind-arrow-icon { background: none !important; border: none !important; }
 
+/* ── Road closure markers ─────────────────────────────────────────────── */
+.closure-marker {
+  width: 22px;
+  height: 22px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  border-radius: 3px;
+  clip-path: polygon(30% 0%, 70% 0%, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0% 70%, 0% 30%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+  cursor: pointer;
+}
+
+.closure-popup { font-size: 0.85rem; min-width: 180px; }
+.closure-popup strong { display: block; margin-bottom: 4px; font-size: 0.9rem; color: #dc2626; }
+.closure-source { color: var(--muted); font-size: 0.78rem; margin-bottom: 4px; }
+.closure-desc   { color: var(--text); margin-bottom: 6px; }
+.closure-dates  { font-size: 0.8rem; color: var(--muted); }
+
 /* ── Utility ──────────────────────────────────────────────────────────── */
 .hidden { display: none !important; }
 

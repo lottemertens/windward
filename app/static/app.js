@@ -686,3 +686,69 @@ function setLoading(on) {
 function pct(count, total) {
   return total > 0 ? Math.round(100 * count / total) : 0;
 }
+
+
+// ── Road closures ─────────────────────────────────────────────────────────────
+
+let closureLayers = [];
+
+// Stop-sign icon: red octagon with ✕, rendered as a div so Leaflet puts it in
+// the markerPane (z-index 600 — above route lines, same layer as waypoints).
+function makeClosureIcon() {
+  return L.divIcon({
+    className: '',
+    html: `<div class="closure-marker" title="Road closure">✕</div>`,
+    iconSize:   [22, 22],
+    iconAnchor: [11, 11],
+    popupAnchor: [0, -12],
+  });
+}
+
+function formatClosureDate(iso) {
+  if (!iso) return '?';
+  const d = new Date(iso);
+  return d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function closurePopupHtml(c) {
+  const start = formatClosureDate(c.start);
+  const end   = c.end ? formatClosureDate(c.end) : 'onbekend';
+  const desc  = c.description ? `<p class="closure-desc">${c.description}</p>` : '';
+  return `
+    <div class="closure-popup">
+      <strong>Weg afgesloten</strong>
+      <p class="closure-source">${c.source}</p>
+      ${desc}
+      <p class="closure-dates">📅 ${start} – ${end}</p>
+    </div>`;
+}
+
+async function loadClosures() {
+  try {
+    const res = await fetch('/api/closures');
+    if (!res.ok) return;   // fail silently — closures are best-effort
+    const closures = await res.json();
+    renderClosures(closures);
+  } catch (_) {
+    // Network error — don't break the app
+  }
+}
+
+function renderClosures(closures) {
+  // Clear any previous closure markers
+  closureLayers.forEach(l => map.removeLayer(l));
+  closureLayers = [];
+
+  closures.forEach(c => {
+    const marker = L.marker([c.lat, c.lon], {
+      icon:          makeClosureIcon(),
+      zIndexOffset:  500,    // above route lines but below waypoint markers (1000)
+    });
+    marker.bindPopup(closurePopupHtml(c), { maxWidth: 260 });
+    marker.addTo(map);
+    closureLayers.push(marker);
+  });
+}
+
+// Load closures when the map first opens (non-blocking, fail silently)
+loadClosures();

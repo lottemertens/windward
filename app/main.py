@@ -5,14 +5,19 @@ Run with:
     uvicorn app.main:app --reload
 
 Endpoints:
-    GET  /api/wind           — wind at default location for a given time
-    POST /api/route          — plan a route via ORS + calculate wind
-    POST /api/upload         — parse an uploaded GPX file
-    POST /api/wind-overlay   — calculate wind for an already-known set of waypoints
+    GET  /api/wind              — wind at default location for a given time
+    POST /api/route             — plan a route via ORS + calculate wind
+    POST /api/upload            — parse an uploaded GPX file
+    POST /api/wind-overlay      — calculate wind for an already-known set of waypoints
+    GET  /api/closures          — active road closures for all of NL (cached)
+    POST /api/refresh-closures  — force refresh the closure cache (token-protected)
 """
+
+from __future__ import annotations
 
 import os
 from datetime import datetime
+from typing import Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.staticfiles import StaticFiles
@@ -27,6 +32,7 @@ from src.gpx_parser import parse_gpx
 from src.geo import route_distance_km
 from src.models import Coordinate
 from src.config import DEFAULT_LOCATION_LAT, DEFAULT_LOCATION_LON, DEFAULT_LOCATION_NAME, CYCLING_PROFILE_ROAD, CYCLING_PROFILE_REGULAR, ORS_GEOCODE_URL
+from src.closures.ndw_client import get_closures, force_refresh
 
 load_dotenv()
 
@@ -240,6 +246,47 @@ async def calculate_wind_overlay(request: WindOverlayRequest):
             for a in display_arrows
         ],
     )
+
+
+# --- /api/closures  (cached NDW road closures) ----------------------------
+
+class ClosureModel(BaseModel):
+    lat:         float
+    lon:         float
+    source:      str
+    start:       str
+    end:         Optional[str] = None
+    description: Optional[str] = None
+
+@app.get("/api/closures", response_model=list[ClosureModel])
+async def list_closures():
+    """
+    Return all active and upcoming road closures (carriagewayClosures) for NL.
+    Data is fetched from the NDW planning feed once per day and cached in memory.
+    The first call of the day will take a few seconds while the 237 MB feed is
+    downloaded and parsed; subsequent calls return instantly from cache.
+    """
+    try:
+        records = await get_closures()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not fetch NDW data: {e}")
+    return [ClosureModel(**r) for r in records]
+
+
+@app.post("/api/refresh-closures")
+async def refresh_closures(token: str):
+    """
+    Force-refresh the NDW closure cache. Protected by REFRESH_TOKEN env var so
+    only the GitHub Actions cron job (or you) can call it.
+    """
+    expected = os.getenv("REFRESH_TOKEN")
+    if not expected or token != expected:
+        raise HTTPException(status_code=403, detail="Invalid token.")
+    try:
+        count = await force_refresh()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Refresh failed: {e}")
+    return {"ok": True, "closures_cached": count}
 
 
 # --- Helpers --------------------------------------------------------------
