@@ -9,6 +9,7 @@ everywhere that uses it.
 # --- OpenRouteService (ORS) -----------------------------------------------
 
 ORS_BASE_URL             = "https://api.openrouteservice.org/v2/directions"
+ORS_GEOCODE_URL          = "https://api.openrouteservice.org/geocode/search"
 CYCLING_PROFILE_ROAD     = "cycling-road"      # road bike — avoids unpaved surfaces
 CYCLING_PROFILE_REGULAR  = "cycling-regular"   # regular bike — accepts unpaved
 CYCLING_PROFILE_DEFAULT  = CYCLING_PROFILE_ROAD
