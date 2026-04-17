@@ -213,6 +213,13 @@ function showResults(results) {
     addressResults.appendChild(li);
   });
 
+  // Position the dropdown under the input using fixed coords so it escapes
+  // the sidebar's overflow:auto clipping (position:fixed ignores overflow).
+  const rect = addressInput.getBoundingClientRect();
+  addressResults.style.top   = `${rect.bottom + 4}px`;
+  addressResults.style.left  = `${rect.left}px`;
+  addressResults.style.width = `${rect.width}px`;
+
   addressResults.classList.remove('hidden');
 }
 

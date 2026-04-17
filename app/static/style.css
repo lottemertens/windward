@@ -125,10 +125,7 @@ button {
 #address-input:focus { border-color: var(--accent); background: #fff; }
 
 #address-results {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
+  position: fixed;   /* fixed escapes overflow:auto clipping on the sidebar */
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -136,6 +133,7 @@ button {
   list-style: none;
   z-index: 2000;
   overflow: hidden;
+  /* Width and position are set via JS each time results are shown */
 }
 #address-results li {
   padding: 8px 12px;
