@@ -26,7 +26,7 @@ from src.analysis.wind_analysis import analyse_route_wind, generate_display_arro
 from src.gpx_parser import parse_gpx
 from src.geo import route_distance_km
 from src.models import Coordinate
-from src.config import DEFAULT_LOCATION_LAT, DEFAULT_LOCATION_LON, DEFAULT_LOCATION_NAME, CYCLING_PROFILE_ROAD, CYCLING_PROFILE_REGULAR
+from src.config import DEFAULT_LOCATION_LAT, DEFAULT_LOCATION_LON, DEFAULT_LOCATION_NAME, CYCLING_PROFILE_ROAD, CYCLING_PROFILE_REGULAR, ORS_GEOCODE_URL
 
 load_dotenv()
 
@@ -71,27 +71,34 @@ class GeocodeSuggestion(BaseModel):
 
 @app.get("/api/geocode", response_model=list[GeocodeSuggestion])
 async def geocode(q: str):
-    """Search for an address using the Nominatim geocoder (OpenStreetMap)."""
+    """Search for a Dutch address using the ORS geocoder."""
     if len(q.strip()) < 3:
         return []
+    api_key = os.getenv("ORS_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ORS_API_KEY is not set")
     async with httpx.AsyncClient() as client:
         res = await client.get(
-            "https://nominatim.openstreetmap.org/search",
-            params={"q": q, "format": "json", "limit": 5, "addressdetails": 0, "countrycodes": "nl"},
-            headers={"User-Agent": "Windward/1.0 (cycling wind planner)"},
+            ORS_GEOCODE_URL,
+            params={
+                "api_key":          api_key,
+                "text":             q,
+                "boundary.country": "NLD",   # ISO 3166-1 alpha-3 for Netherlands
+                "size":             5,
+            },
             timeout=5.0,
         )
         res.raise_for_status()
-    results = res.json()
+    features = res.json().get("features", [])
     suggestions = []
-    for r in results:
-        parts = r["display_name"].split(", ")
-        short = ", ".join(parts[:2])
+    for f in features:
+        props = f["properties"]
+        lon, lat = f["geometry"]["coordinates"]
         suggestions.append(GeocodeSuggestion(
-            name=short,
-            full=r["display_name"],
-            lat=float(r["lat"]),
-            lon=float(r["lon"]),
+            name=props.get("name", props.get("label", "")),
+            full=props.get("label", ""),
+            lat=lat,
+            lon=lon,
         ))
     return suggestions
 
