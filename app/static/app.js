@@ -119,6 +119,11 @@ function degreesToCompass(deg) {
 fetchWindOverview();
 datetimeInput.addEventListener('change', fetchWindOverview);
 
+// Warm the closure cache silently on page load. The NDW feed takes ~25 s to
+// fetch and parse on the first request; doing it now means closures appear
+// immediately after the first route calculation instead of after a long wait.
+fetch('/api/closures').catch(() => {});
+
 
 // ── Tab switching ─────────────────────────────────────────────────────
 tabPlan.addEventListener('click', () => {
