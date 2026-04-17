@@ -5,7 +5,7 @@ Fetches the NDW planning feed (road works + events) once per day and caches
 the filtered result in memory. The raw feed is 237 MB decompressed, so we:
   - Stream-parse with iterparse (never load the full tree into memory)
   - Keep only carriagewayClosures active within the next 7 days
-  - Store a small list of dicts — typically a few hundred records for all NL
+  - Store a small list of ClosureRecords — typically a few thousand for all NL
 
 Endpoints that serve closure data call get_closures(), which returns the cache
 (or triggers a lazy fetch if the cache is empty or older than CACHE_TTL_HOURS).
@@ -26,31 +26,32 @@ import httpx
 
 from src.config import (
     NDW_PLANNING_URL,
+    NDW_NS_SITUATION,
+    NDW_CLOSURE_TYPE,
     CLOSURE_CACHE_TTL_HOURS,
     CLOSURE_MAX_DAYS_AHEAD,
 )
+from src.models import ClosureRecord
 
 logger = logging.getLogger(__name__)
 
-# ── Namespaces in the DATEX II v3 planning feed ───────────────────────────────
-
-NS_SIT = "http://datex2.eu/schema/3/situation"
-NS_MC  = "http://datex2.eu/schema/3/messageContainer"
 
 # ── In-memory cache ───────────────────────────────────────────────────────────
+# _Cache is private to this module — it is an implementation detail, not a
+# shared domain type, so it lives here rather than in src/models.py.
 
 @dataclass
 class _Cache:
-    records:    list[dict] = field(default_factory=list)
-    fetched_at: datetime | None = None
+    records:    list[ClosureRecord] = field(default_factory=list)
+    fetched_at: Optional[datetime]  = None
 
-_cache = _Cache()
+_cache      = _Cache()
 _fetch_lock = asyncio.Lock()   # prevents duplicate fetches if two requests arrive simultaneously
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-async def get_closures() -> list[dict]:
+async def get_closures() -> list[ClosureRecord]:
     """Return cached closures, fetching fresh data if the cache is stale."""
     if _is_stale():
         async with _fetch_lock:
@@ -81,7 +82,7 @@ async def _refresh() -> None:
     logger.info("Fetching NDW planning feed…")
     raw = await _download()
     records = await asyncio.to_thread(_parse, raw)
-    _cache.records = records
+    _cache.records    = records
     _cache.fetched_at = datetime.now(timezone.utc)
     logger.info("NDW cache refreshed: %d closures", len(records))
 
@@ -94,7 +95,7 @@ async def _download() -> bytes:
     return gzip.decompress(r.content)
 
 
-def _parse(xml_bytes: bytes) -> list[dict]:
+def _parse(xml_bytes: bytes) -> list[ClosureRecord]:
     """
     Stream-parse the DATEX II v3 XML and return only carriagewayClosures that
     are active within the next CLOSURE_MAX_DAYS_AHEAD days.
@@ -102,40 +103,34 @@ def _parse(xml_bytes: bytes) -> list[dict]:
     We use iterparse so the full 237 MB tree is never held in memory — each
     <situation> element is processed and immediately discarded.
     """
-    today     = date.today()
-    cutoff    = today + timedelta(days=CLOSURE_MAX_DAYS_AHEAD)
-    results   = []
+    today   = date.today()
+    cutoff  = today + timedelta(days=CLOSURE_MAX_DAYS_AHEAD)
+    results = []
 
     context = ET.iterparse(io.BytesIO(xml_bytes), events=("end",))
 
-    for event, elem in context:
-        local = elem.tag.split("}")[-1]
-
-        if local != "situation":
+    for _event, elem in context:
+        if elem.tag.split("}")[-1] != "situation":
             continue
 
-        # ── Walk each situationRecord inside this situation ────────────────
-        for rec in elem.findall(f"{{{NS_SIT}}}situationRecord"):
+        for rec in elem.findall(f"{{{NDW_NS_SITUATION}}}situationRecord"):
             closure = _extract_closure(rec, today, cutoff)
             if closure:
                 results.append(closure)
 
-        # Free memory — we're done with this situation element
-        elem.clear()
+        elem.clear()   # free memory — done with this situation element
 
     return results
 
 
-def _extract_closure(rec: ET.Element, today: date, cutoff: date) -> dict | None:
+def _extract_closure(rec: ET.Element, today: date, cutoff: date) -> Optional[ClosureRecord]:
     """
-    Return a closure dict if this record is:
-      - a carriagewayClosures (full road closed, not just lane restriction)
-      - active today or starting within the next CLOSURE_MAX_DAYS_AHEAD days
-    Otherwise return None.
+    Return a ClosureRecord if this record is a full carriagewayClosures that
+    overlaps [today, cutoff]. Otherwise return None.
     """
     # ── Management type filter ─────────────────────────────────────────────
     mgmt_elem = _find(rec, "roadOrCarriagewayOrLaneManagementType")
-    if mgmt_elem is None or mgmt_elem.text != "carriagewayClosures":
+    if mgmt_elem is None or mgmt_elem.text != NDW_CLOSURE_TYPE:
         return None
 
     # ── Date filter ────────────────────────────────────────────────────────
@@ -145,7 +140,6 @@ def _extract_closure(rec: ET.Element, today: date, cutoff: date) -> dict | None:
     start_d = _parse_date(start_elem.text) if start_elem is not None else date.min
     end_d   = _parse_date(end_elem.text)   if end_elem   is not None else date.max
 
-    # Keep if the closure overlaps [today, cutoff]
     if end_d < today or start_d > cutoff:
         return None
 
@@ -166,26 +160,25 @@ def _extract_closure(rec: ET.Element, today: date, cutoff: date) -> dict | None:
     source = source_elem.text.strip() if source_elem is not None else "unknown"
 
     # ── Human-readable description ─────────────────────────────────────────
-    # The feed stores descriptions as multiple <value> elements under
-    # <generalPublicComment><comment><values>. We grab any text that looks
-    # like a description (more than 5 chars, not the source name).
+    # The feed stores descriptions as multiple <value> elements. We grab any
+    # text that looks like a description (> 5 chars, not the source name itself).
     all_values = [e.text.strip() for e in rec.iter() if e.tag.split("}")[-1] == "value" and e.text]
     desc_parts = [v for v in all_values if len(v) > 5 and v != source]
     description = "; ".join(dict.fromkeys(desc_parts))[:200]  # deduplicate, cap length
 
-    return {
-        "lat":         lat,
-        "lon":         lon,
-        "source":      source,
-        "start":       start_d.isoformat(),
-        "end":         end_d.isoformat() if end_d != date.max else None,
-        "description": description or None,
-    }
+    return ClosureRecord(
+        lat=lat,
+        lon=lon,
+        source=source,
+        start=start_d.isoformat(),
+        end=end_d.isoformat() if end_d != date.max else None,
+        description=description or None,
+    )
 
 
 # ── XML helpers ───────────────────────────────────────────────────────────────
 
-def _find(elem: ET.Element, local_name: str) -> ET.Element | None:
+def _find(elem: ET.Element, local_name: str) -> Optional[ET.Element]:
     """Find first descendant by local tag name, ignoring namespace."""
     for child in elem.iter():
         if child.tag.split("}")[-1] == local_name:

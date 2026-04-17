@@ -270,7 +270,9 @@ async def list_closures():
         records = await get_closures()
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not fetch NDW data: {e}")
-    return [ClosureModel(**r) for r in records]
+    return [ClosureModel(lat=r.lat, lon=r.lon, source=r.source,
+                         start=r.start, end=r.end, description=r.description)
+            for r in records]
 
 
 @app.post("/api/refresh-closures")
