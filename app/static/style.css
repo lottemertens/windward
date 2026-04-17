@@ -426,4 +426,10 @@ button {
   }
 
   #sidebar h1 { display: none; }
+
+  /* Smaller wind arrows on mobile so they don't cover the route colours */
+  .wind-arrow-icon svg {
+    width: 18px !important;
+    height: 18px !important;
+  }
 }

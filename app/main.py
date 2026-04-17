@@ -94,8 +94,12 @@ async def geocode(q: str):
     for f in features:
         props = f["properties"]
         lon, lat = f["geometry"]["coordinates"]
+        # Build a short name: "Street/Place, City" so duplicates are distinguishable.
+        name      = props.get("name", "")
+        locality  = props.get("locality", "")
+        short     = f"{name}, {locality}" if locality and locality != name else name
         suggestions.append(GeocodeSuggestion(
-            name=props.get("name", props.get("label", "")),
+            name=short or props.get("label", ""),
             full=props.get("label", ""),
             lat=lat,
             lon=lon,

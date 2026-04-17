@@ -302,9 +302,11 @@ function makePlanIcon(type, label) {
   });
 }
 
+const POPUP_LABELS = { start: 'Start', end: 'End', via: 'Via point' };
+
 /**
- * Re-label every marker so numbers stay sequential after adds/removes.
- * S = start, 1/2/3… = via points, E = end.
+ * Re-label every marker so numbers and colours stay correct after adds/removes.
+ * Also refreshes popup content so "Start"/"End" labels update if points shift.
  */
 function refreshMarkerLabels() {
   const n = planPoints.length;
@@ -314,13 +316,21 @@ function refreshMarkerLabels() {
     else if (idx === n - 1) { label = 'E'; type = 'end'; }
     else                    { label = String(idx); type = 'via'; }
     point.marker.setIcon(makePlanIcon(type, label));
+    point.marker.setPopupContent(markerPopupHtml(POPUP_LABELS[type]));
   });
+}
+
+function markerPopupHtml(label) {
+  return `<div class="marker-popup">
+    <strong>${label}</strong>
+    <button class="popup-remove-btn">Remove</button>
+  </div>`;
 }
 
 /**
  * Create a waypoint marker using L.marker + divIcon so it lands in Leaflet's
  * markerPane (z-index 600) — naturally above route polylines (overlayPane, 400).
- * Via markers include a Remove button in their popup.
+ * All markers (start, via, end) have a Remove button in their popup.
  */
 function makePlanMarker(lat, lng, type) {
   const marker = L.marker([lat, lng], {
@@ -339,24 +349,14 @@ function makePlanMarker(lat, lng, type) {
     }
   });
 
-  if (type === 'via') {
-    marker.bindPopup(
-      `<div class="marker-popup">
-         <strong>Via point</strong>
-         <button class="popup-remove-btn">Remove</button>
-       </div>`
-    );
-    marker.on('popupopen', (e) => {
-      e.popup.getElement().querySelector('.popup-remove-btn').onclick = () => {
-        marker.closePopup();
-        const point = planPoints.find(p => p.marker === marker);
-        if (point) removePlanPoint(point);
-      };
-    });
-  } else {
-    const popupLabel = type === 'start' ? 'Start' : 'End';
-    marker.bindPopup(`<div class="marker-popup"><strong>${popupLabel}</strong></div>`);
-  }
+  marker.bindPopup(markerPopupHtml(POPUP_LABELS[type]));
+  marker.on('popupopen', (e) => {
+    e.popup.getElement().querySelector('.popup-remove-btn').onclick = () => {
+      marker.closePopup();
+      const point = planPoints.find(p => p.marker === marker);
+      if (point) removePlanPoint(point);
+    };
+  });
 
   return marker;
 }

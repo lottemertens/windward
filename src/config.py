@@ -32,9 +32,9 @@ DEFAULT_LOCATION_NAME = "Amsterdam"
 # how many wind samples were fetched. More frequent than samples is fine
 # because values are interpolated from the existing samples — no extra API calls.
 
-ARROW_SPACING_KM = 0.5   # one arrow per 0.5 km
+ARROW_SPACING_KM = 1.5   # one arrow per 1.5 km
 MIN_ARROWS       = 4     # always show at least this many
-MAX_ARROWS       = 30    # cap for very long routes
+MAX_ARROWS       = 20    # cap for very long routes
 
 # --- Wind colour scale ----------------------------------------------------
 # headwind_ms values are clamped to [-HEADWIND_SCALE_MS, +HEADWIND_SCALE_MS]
