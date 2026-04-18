@@ -41,6 +41,11 @@ const avoidAllBtn       = document.getElementById('avoid-all-btn');
 const mapsBtn           = document.getElementById('maps-btn');
 const closureLoadingEl  = document.getElementById('closure-loading');
 const addressSearch     = addressInput.parentElement;   // .address-search div
+const departureCard     = document.getElementById('departure-card');
+const departureChart    = document.getElementById('departure-chart');
+const departureHint     = document.getElementById('departure-hint');
+const elevationStrip    = document.getElementById('elevation-strip');
+const elevationSvg      = document.getElementById('elevation-svg');
 
 
 // ── App state ─────────────────────────────────────────────────────────
@@ -62,9 +67,10 @@ let lastRouteSegments = [];     // stored after each calculation, used for GPX e
 // allClosuresCache: session-level cache of the full /api/closures response.
 //   Populated on page load (background pre-warm) and reused on every route.
 //   No need to persist across page reloads — the server refreshes daily.
-let avoidedClosures  = [];
-let previewLayers    = [];
-let previewSegments  = [];
+let avoidedClosures      = [];
+let previewLayers        = [];
+let previewSegments      = [];
+let departureScoreGeneration = 0;  // incremented on each fetch; stale responses are discarded
 let previewArrows    = [];
 let allClosuresCache = null;
 
@@ -502,6 +508,7 @@ async function _fetchRoute(avoidGeometries = []) {
 async function calculateOrsRoute() {
   setLoading(true);
   discardPreview();   // cancel any pending preview before a full recalculate
+  clearDepartureChart();  // clear stale scores immediately; fresh ones arrive after the route fetch
 
   try {
     const data = await _fetchRoute(avoidedClosures.map(c => c.geometry));
@@ -1042,9 +1049,6 @@ function showArrival(durationMin) {
 // Draws a filled SVG area chart from an array of elevation values (metres).
 // Shown only for planned routes (ORS returns elevation); hidden for GPX uploads.
 
-const elevationStrip = document.getElementById('elevation-strip');
-const elevationSvg   = document.getElementById('elevation-svg');
-
 function showElevationChart(elevations) {
   if (!elevations || elevations.length < 2) {
     elevationStrip.classList.add('hidden');
@@ -1095,15 +1099,15 @@ function clearElevationChart() {
 // renders a clickable bar chart. Clicking a bar sets the departure time
 // to that hour and recalculates the route wind.
 
-const departureCard  = document.getElementById('departure-card');
-const departureChart = document.getElementById('departure-chart');
-const departureHint  = document.getElementById('departure-hint');
-
 async function fetchDepartureScores(waypoints) {
   if (!waypoints || waypoints.length < 2) return;
   departureCard.classList.remove('hidden');
   departureChart.innerHTML = '<span class="departure-loading">Loading…</span>';
   departureHint.textContent = '';
+
+  // Capture the generation at call time; if a newer fetch starts before this
+  // one resolves, we discard the stale result instead of overwriting the chart.
+  const gen = ++departureScoreGeneration;
 
   try {
     const res = await fetch('/api/departure-scores', {
@@ -1115,8 +1119,9 @@ async function fetchDepartureScores(waypoints) {
         speed_kmh:    speedInput.value ? parseFloat(speedInput.value) : null,
       }),
     });
-    if (!res.ok) return;
+    if (!res.ok || gen !== departureScoreGeneration) return;
     const scores = await res.json();
+    if (gen !== departureScoreGeneration) return;
     renderDepartureChart(scores);
   } catch { /* best-effort — don't break the main flow */ }
 }
@@ -1128,7 +1133,7 @@ function renderDepartureChart(scores) {
   const values = scores.map(s => s.score);
   const absMax = Math.max(...values.map(Math.abs), 0.5);
 
-  const selectedHour = new Date(datetimeInput.value).getHours();
+  const selectedHour = parseInt(datetimeInput.value.slice(11, 13), 10);
 
   // Find the best hour (lowest score = most tailwind)
   const bestScore = Math.min(...values);
@@ -1159,10 +1164,12 @@ function renderDepartureChart(scores) {
     col.appendChild(label);
 
     col.addEventListener('click', () => {
-      // Set departure time to this hour, keeping the same date
-      const current = new Date(datetimeInput.value);
-      current.setHours(s.hour, 0, 0, 0);
-      datetimeInput.value = current.toISOString().slice(0, 16);
+      // Set departure time to this hour, keeping the same date.
+      // Build the string in local time directly — toISOString() would give UTC
+      // and shift the hour in non-UTC timezones.
+      const datePart = datetimeInput.value.slice(0, 10);   // "YYYY-MM-DD"
+      const hour     = String(s.hour).padStart(2, '0');
+      datetimeInput.value = `${datePart}T${hour}:00`;
       datetimeInput.dispatchEvent(new Event('change'));   // update wind widget
       if (planPoints.length >= 2) calculateOrsRoute();
       else if (uploadedWaypoints) {
