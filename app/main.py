@@ -31,7 +31,7 @@ from src.analysis.wind_analysis import analyse_route_wind, generate_display_arro
 from src.gpx_parser import parse_gpx
 from src.geo import route_distance_km
 from src.models import Coordinate
-from src.config import DEFAULT_LOCATION_LAT, DEFAULT_LOCATION_LON, DEFAULT_LOCATION_NAME, CYCLING_PROFILE_ROAD, CYCLING_PROFILE_REGULAR, ORS_GEOCODE_URL, CLOSURE_AVOID_BUFFER_DEG
+from src.config import DEFAULT_LOCATION_LAT, DEFAULT_LOCATION_LON, DEFAULT_LOCATION_NAME, ORS_GEOCODE_URL, CLOSURE_AVOID_BUFFER_DEG
 from src.closures.ndw_client import get_closures, force_refresh
 
 load_dotenv()
@@ -62,9 +62,10 @@ class SurfaceModel(BaseModel):
     percentage:  float
 
 class RouteInfoModel(BaseModel):
-    distance_km: float
-    surfaces:    list[SurfaceModel]   # empty for uploaded routes
-    warnings:    list[str]            # empty for uploaded routes
+    distance_km:  float
+    surfaces:     list[SurfaceModel]   # empty for uploaded routes
+    warnings:     list[str]            # empty for uploaded routes
+    duration_min: Optional[int] = None # estimated riding time (timed wind only)
 
 
 # --- /api/geocode  (address search via ORS) --------------------------------
@@ -142,7 +143,6 @@ async def get_wind_overview(datetime_iso: str):
 class RouteRequest(BaseModel):
     waypoints:        list[WaypointModel]   # [start, optional via points..., end]
     datetime_iso:     str
-    profile:          str            = CYCLING_PROFILE_ROAD
     avoid_geometries: list           = []   # list of [[lat,lon],...] closure geometries to avoid
     speed_kmh:        Optional[float] = None  # if set, use time-dependent wind calculation
 
@@ -160,9 +160,6 @@ async def calculate_route(request: RouteRequest):
     if len(request.waypoints) < 2:
         raise HTTPException(status_code=400, detail="At least 2 waypoints are required.")
 
-    if request.profile not in (CYCLING_PROFILE_ROAD, CYCLING_PROFILE_REGULAR):
-        raise HTTPException(status_code=400, detail="Invalid profile.")
-
     at = _parse_datetime(request.datetime_iso)
 
     avoid = _geometries_to_avoid_polygons(request.avoid_geometries)
@@ -171,7 +168,6 @@ async def calculate_route(request: RouteRequest):
         result = await get_cycling_route(
             waypoints=[Coordinate(lat=w.lat, lon=w.lon) for w in request.waypoints],
             api_key=api_key,
-            profile=request.profile,
             avoid_polygons=avoid,
         )
     except httpx.HTTPStatusError as e:
@@ -224,8 +220,9 @@ class WindOverlayRequest(BaseModel):
     speed_kmh:    Optional[float] = None  # if set, use time-dependent wind calculation
 
 class WindOverlayResponse(BaseModel):
-    segments:    list[SegmentModel]
-    wind_arrows: list[WindArrowModel]
+    segments:     list[SegmentModel]
+    wind_arrows:  list[WindArrowModel]
+    duration_min: Optional[int] = None  # estimated riding time (timed wind only)
 
 @app.post("/api/wind-overlay", response_model=WindOverlayResponse)
 async def calculate_wind_overlay(request: WindOverlayRequest):
@@ -234,11 +231,11 @@ async def calculate_wind_overlay(request: WindOverlayRequest):
     waypoints = [Coordinate(lat=w.lat, lon=w.lon) for w in request.waypoints]
 
     try:
-        wind_samples = (
-            await get_wind_along_route_timed(waypoints, at, request.speed_kmh)
-            if request.speed_kmh
-            else await get_wind_along_route(waypoints, at)
-        )
+        if request.speed_kmh:
+            wind_samples, duration_min = await get_wind_along_route_timed(waypoints, at, request.speed_kmh)
+        else:
+            wind_samples  = await get_wind_along_route(waypoints, at)
+            duration_min  = None
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -262,6 +259,7 @@ async def calculate_wind_overlay(request: WindOverlayRequest):
             )
             for a in display_arrows
         ],
+        duration_min=duration_min,
     )
 
 
@@ -368,11 +366,11 @@ async def _build_route_response(
     speed_kmh: Optional[float] = None,
 ) -> RouteResponse:
     try:
-        wind_samples = (
-            await get_wind_along_route_timed(waypoints, at, speed_kmh)
-            if speed_kmh
-            else await get_wind_along_route(waypoints, at)
-        )
+        if speed_kmh:
+            wind_samples, duration_min = await get_wind_along_route_timed(waypoints, at, speed_kmh)
+        else:
+            wind_samples  = await get_wind_along_route(waypoints, at)
+            duration_min  = None
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -400,6 +398,7 @@ async def _build_route_response(
             distance_km=distance_km,
             surfaces=surfaces,
             warnings=warnings,
+            duration_min=duration_min,
         ),
     )
 

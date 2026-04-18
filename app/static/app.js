@@ -30,8 +30,6 @@ const fileNameEl = document.getElementById('file-name');
 const uploadBtn  = document.getElementById('upload-btn');
 const windBtn    = document.getElementById('wind-btn');
 const exportBtn  = document.getElementById('export-btn');
-const btnRoad           = document.getElementById('btn-road');
-const btnRegular        = document.getElementById('btn-regular');
 const speedInput        = document.getElementById('speed-input');
 const addressInput      = document.getElementById('address-input');
 const addressResults    = document.getElementById('address-results');
@@ -47,7 +45,6 @@ const addressSearch     = addressInput.parentElement;   // .address-search div
 // planPoints holds all clicked points in order: [start, ...via, end]
 // Each entry: { lat, lng, marker, addedAt }
 // addedAt is a monotonic counter used by undo to find the most recently added point.
-let selectedProfile   = 'cycling-road';   // matches the default in RouteRequest
 let planPoints        = [];
 let pointCounter      = 0;
 let routeLayers       = [];
@@ -80,8 +77,7 @@ const HEADWIND_SCALE         = 5.0;   // m/s — mirrors HEADWIND_SCALE_MS in co
 const CLOSURE_BUFFER_M       = 10;    // metres from route line to include a road closure
 const GHOST_ROUTE_OPACITY    = 0.40;  // opacity of the old route during reroute preview
 const GHOST_ARROW_OPACITY    = 0.25;  // arrows are less important so fade them more
-const DEFAULT_SPEED_ROAD     = 25;    // km/h — mirrors DEFAULT_SPEED_ROAD_KMH in config.py
-const DEFAULT_SPEED_REGULAR  = 20;    // km/h — mirrors DEFAULT_SPEED_REGULAR_KMH in config.py
+const DEFAULT_SPEED          = 20;    // km/h — mirrors DEFAULT_SPEED_KMH in config.py
 
 function windColour(headwindMs) {
   const t = Math.max(-1, Math.min(1, headwindMs / HEADWIND_SCALE));
@@ -263,31 +259,6 @@ function selectAddress(lat, lng, label) {
     calculateOrsRoute();
   }
 }
-
-
-// ── Bike type toggle ──────────────────────────────────────────────────
-// When switching bike type, update the speed default — but only if the
-// current value matches the other type's default (i.e. the user hasn't
-// manually overridden it).
-btnRoad.addEventListener('click', () => {
-  selectedProfile = 'cycling-road';
-  btnRoad.classList.add('active');
-  btnRegular.classList.remove('active');
-  if (speedInput.value === String(DEFAULT_SPEED_REGULAR) || speedInput.value === '') {
-    speedInput.value = DEFAULT_SPEED_ROAD;
-  }
-  if (planPoints.length >= 2) calculateOrsRoute();
-});
-
-btnRegular.addEventListener('click', () => {
-  selectedProfile = 'cycling-regular';
-  btnRegular.classList.add('active');
-  btnRoad.classList.remove('active');
-  if (speedInput.value === String(DEFAULT_SPEED_ROAD) || speedInput.value === '') {
-    speedInput.value = DEFAULT_SPEED_REGULAR;
-  }
-  if (planPoints.length >= 2) calculateOrsRoute();
-});
 
 
 // ── Plan tab: map click → add waypoint ───────────────────────────────
@@ -486,7 +457,6 @@ async function _fetchRoute(avoidGeometries = []) {
     body: JSON.stringify({
       waypoints:        planPoints.map(p => ({ lat: p.lat, lon: p.lng })),
       datetime_iso:     datetimeInput.value + ':00',
-      profile:          selectedProfile,
       avoid_geometries: avoidGeometries,
       speed_kmh:        speedInput.value ? parseFloat(speedInput.value) : null,
     }),
@@ -607,7 +577,6 @@ async function avoidAllClosures() {
     previewSegments = data.segments;
     previewArrows   = data.wind_arrows;
     previewLayers = _drawSegmentPolylines(data.segments, 0.9);
-    rerouteBar.classList.add('hidden'); // will re-show below
     rerouteBar.classList.remove('hidden');
   } catch (err) {
     newToAvoid.forEach(() => avoidedClosures.pop());
@@ -692,6 +661,7 @@ windBtn.addEventListener('click', async () => {
     drawRoute(data.segments);
     drawWindArrows(data.wind_arrows);
     showSummary(data.segments);
+    showArrival(data.duration_min);
     exportBtn.classList.remove('hidden');
 
   } catch (err) {
@@ -742,13 +712,13 @@ function exportGpx() {
 
   const datetime = datetimeInput.value || new Date().toISOString().slice(0, 16);
   const gpx = `<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="KomootLayer" xmlns="http://www.topografix.com/GPX/1/1">
+<gpx version="1.1" creator="Windward" xmlns="http://www.topografix.com/GPX/1/1">
   <metadata>
-    <name>KomootLayer route</name>
+    <name>Windward route</name>
     <time>${datetime}:00</time>
   </metadata>
   <trk>
-    <name>KomootLayer route</name>
+    <name>Windward route</name>
     <trkseg>
 ${trkpts}
     </trkseg>
@@ -822,6 +792,7 @@ function clearRoute() {
   routeLayers.forEach(l => map.removeLayer(l));   routeLayers   = [];
   lastRouteSegments = [];
   previewSegments   = [];
+  previewArrows     = [];
   rerouteBar.classList.add('hidden');
   exportBtn.classList.add('hidden');
   avoidAllBtn.classList.add('hidden');
@@ -855,6 +826,8 @@ function showRouteInfo(info) {
   document.getElementById('val-distance').textContent = info.distance_km;
   routeInfo.classList.remove('hidden');
 
+  showArrival(info.duration_min);
+
   const surfEl   = document.getElementById('val-surfaces');
   const surfItem = document.getElementById('info-surfaces');
   if (info.surfaces && info.surfaces.length > 0) {
@@ -874,6 +847,29 @@ function showRouteInfo(info) {
   } else {
     warnItem.classList.add('hidden');
   }
+}
+
+function showArrival(durationMin) {
+  const arrivalItem = document.getElementById('info-arrival');
+  if (!durationMin) {
+    arrivalItem.classList.add('hidden');
+    return;
+  }
+  const h = Math.floor(durationMin / 60);
+  const m = durationMin % 60;
+  const duration = h > 0 ? `${h}h ${m}m` : `${m}m`;
+
+  const departure = new Date(datetimeInput.value);
+  const arrival   = new Date(departure.getTime() + durationMin * 60 * 1000);
+  const hh = String(arrival.getHours()).padStart(2, '0');
+  const mm = String(arrival.getMinutes()).padStart(2, '0');
+  const sameDay = arrival.toDateString() === departure.toDateString();
+  const arrivalStr = sameDay
+    ? `${hh}:${mm}`
+    : `${arrival.toLocaleDateString('nl-NL', { month: 'short', day: 'numeric' })} ${hh}:${mm}`;
+
+  document.getElementById('val-arrival').textContent = `${duration} · ${arrivalStr}`;
+  arrivalItem.classList.remove('hidden');
 }
 
 function setLoading(on) {
@@ -1039,7 +1035,15 @@ async function loadAndFilterClosures(segments) {
       if (!res.ok) return;
       allClosuresCache = await res.json();
     }
-    const onRoute = allClosuresCache.filter(c => isClosureOnRoute(c, segments));
+
+    // Only show closures that overlap the selected departure date.
+    // start/end are ISO date strings ("YYYY-MM-DD"); end may be null (open-ended).
+    const departureDate = datetimeInput.value.slice(0, 10);
+    const onRoute = allClosuresCache.filter(c => {
+      if (c.start && c.start !== '?' && c.start > departureDate) return false;
+      if (c.end && c.end < departureDate) return false;
+      return isClosureOnRoute(c, segments);
+    });
     renderClosures(onRoute);
   } catch (_) {
     // Network error — closures are best-effort

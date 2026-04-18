@@ -182,29 +182,6 @@ button {
   gap: 10px;
 }
 
-/* ── Bike type toggle ────────────────────────────────────────────────── */
-.bike-toggle {
-  display: flex;
-  gap: 4px;
-  background: #eef1f7;
-  border-radius: 8px;
-  padding: 3px;
-}
-.bike-btn {
-  flex: 1;
-  padding: 5px;
-  border-radius: 6px;
-  font-size: 0.8rem;
-  font-weight: 500;
-  background: transparent;
-  color: var(--muted);
-}
-.bike-btn.active {
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-}
-
 /* ── Tabs ────────────────────────────────────────────────────────────── */
 .tab-row {
   display: flex;

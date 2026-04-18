@@ -33,20 +33,29 @@ def parse_gpx(content: bytes) -> list[Coordinate]:
     except ET.ParseError as e:
         raise ValueError(f"Could not parse file as XML: {e}")
 
-    waypoints: list[Coordinate] = []
+    def _collect(tag_name: str) -> list[Coordinate]:
+        pts = []
+        for element in root.iter():
+            if _strip_ns(element.tag) == tag_name:
+                lat = element.get('lat')
+                lon = element.get('lon')
+                if lat is None or lon is None:
+                    continue
+                try:
+                    pts.append(Coordinate(lat=float(lat), lon=float(lon)))
+                except ValueError:
+                    continue
+        return pts
 
-    # Walk every element in the tree, match by local tag name (ignoring namespace)
-    for element in root.iter():
-        tag = _strip_ns(element.tag)
-        if tag in ('trkpt', 'rtept', 'wpt'):
-            lat = element.get('lat')
-            lon = element.get('lon')
-            if lat is None or lon is None:
-                continue
-            try:
-                waypoints.append(Coordinate(lat=float(lat), lon=float(lon)))
-            except ValueError:
-                continue  # skip malformed points
+    # Prefer track points (GPS recording) over route points (planned route) over
+    # standalone waypoints (POIs). Komoot and similar apps sometimes export all
+    # three in the same file; mixing them causes spurious line jumps on the map.
+    for tag in ('trkpt', 'rtept', 'wpt'):
+        waypoints = _collect(tag)
+        if waypoints:
+            break
+    else:
+        waypoints = []
 
     if not waypoints:
         raise ValueError(

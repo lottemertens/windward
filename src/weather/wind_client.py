@@ -90,7 +90,7 @@ async def get_wind_along_route_timed(
     waypoints: list[Coordinate],
     departure_at: datetime,
     speed_kmh: float,
-) -> list[WindSample]:
+) -> tuple[list[WindSample], int]:
     """
     Fetch wind along a route accounting for the time spent riding.
 
@@ -106,9 +106,12 @@ async def get_wind_along_route_timed(
                  just like the static version. No extra API calls.
       Phase 2 — Sequential pass: extract interpolated wind at the estimated
                  arrival time, adjust speed, advance the clock to the next point.
+
+    Returns (wind_samples, duration_min) where duration_min is the estimated
+    total riding time in minutes, accounting for headwind/tailwind speed changes.
     """
     if not waypoints:
-        return []
+        return [], 0
 
     distance_km = route_distance_km(waypoints)
     n    = int(distance_km / SAMPLE_SPACING_KM)
@@ -164,7 +167,7 @@ def _timed_wind_pass(
     raw_forecasts: list[dict],
     departure_at: datetime,
     speed_kmh: float,
-) -> list[WindSample]:
+) -> tuple[list[WindSample], int]:
     """
     Walk sample points one by one.  At each point:
       1. Interpolate wind at the current estimated arrival time.
@@ -172,6 +175,9 @@ def _timed_wind_pass(
       3. Adjust effective speed and advance the clock.
 
     This is pure Python — no I/O, runs in microseconds.
+
+    Returns (wind_samples, duration_min) where duration_min is the estimated
+    total riding time in minutes, accounting for headwind/tailwind speed changes.
     """
     min_speed_ms = MIN_SPEED_KMH / 3.6
     speed_ms     = speed_kmh / 3.6
@@ -202,7 +208,8 @@ def _timed_wind_pass(
             # Advance the clock
             current_time += timedelta(hours=segment_km / (v_eff_ms * 3.6))
 
-    return results
+    duration_min = round((current_time - departure_at).total_seconds() / 60)
+    return results, duration_min
 
 
 def _interpolate_at_time(forecast: dict, at: datetime) -> WindSample:

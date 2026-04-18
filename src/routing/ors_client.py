@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from src.models import Coordinate
-from src.config import ORS_BASE_URL, CYCLING_PROFILE_DEFAULT
+from src.config import ORS_BASE_URL, CYCLING_PROFILE, ORS_ROUTE_PREFERENCE, ORS_AVOID_FEATURES
 
 
 # Maps ORS integer surface codes to human-readable names.
@@ -59,16 +59,11 @@ class OrsRouteResult:
 async def get_cycling_route(
     waypoints: list[Coordinate],
     api_key: str,
-    profile: str = CYCLING_PROFILE_DEFAULT,
     avoid_polygons: Optional[dict] = None,
 ) -> OrsRouteResult:
     """
     Request a cycling route from ORS through two or more waypoints.
     Returns the full route geometry plus surface breakdown and any warnings.
-
-    Args:
-        profile: ORS cycling profile — "cycling-road" (avoids unpaved) or
-                 "cycling-regular" (accepts unpaved). Defaults to cycling-road.
 
     Raises:
         ValueError: if fewer than 2 waypoints are provided.
@@ -77,15 +72,19 @@ async def get_cycling_route(
     if len(waypoints) < 2:
         raise ValueError("At least 2 waypoints are required to calculate a route.")
 
-    url = f"{ORS_BASE_URL}/{profile}/geojson"
+    url = f"{ORS_BASE_URL}/{CYCLING_PROFILE}/geojson"
 
     body = {
         # ORS expects [lon, lat] order — we flip from our internal (lat, lon).
         "coordinates": [[w.lon, w.lat] for w in waypoints],
         "extra_info": ["surface"],
+        "preference":  ORS_ROUTE_PREFERENCE,
+        "options": {
+            "avoid_features": ORS_AVOID_FEATURES,
+        },
     }
     if avoid_polygons:
-        body["options"] = {"avoid_polygons": avoid_polygons}
+        body["options"]["avoid_polygons"] = avoid_polygons
 
     headers = {
         "Authorization": api_key,

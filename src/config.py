@@ -10,9 +10,15 @@ everywhere that uses it.
 
 ORS_BASE_URL             = "https://api.openrouteservice.org/v2/directions"
 ORS_GEOCODE_URL          = "https://api.openrouteservice.org/geocode/search"
-CYCLING_PROFILE_ROAD     = "cycling-road"      # road bike — avoids unpaved surfaces
-CYCLING_PROFILE_REGULAR  = "cycling-regular"   # regular bike — accepts unpaved
-CYCLING_PROFILE_DEFAULT  = CYCLING_PROFILE_ROAD
+# cycling-regular is used for all routes. cycling-road was considered but it
+# deprioritises dedicated cycling infrastructure (highway=cycleway) in favour of
+# named streets, which produces worse results in the Netherlands where cycling
+# paths are extensive and well-mapped.
+CYCLING_PROFILE          = "cycling-regular"
+# "recommended" weighs cycling suitability and infrastructure rather than
+# minimising travel time ("fastest" is deprecated for cycling profiles in ORS).
+ORS_ROUTE_PREFERENCE     = "recommended"
+ORS_AVOID_FEATURES       = ["steps", "ferries"]
 
 # --- Open-Meteo ------------------------------------------------------------
 
@@ -37,8 +43,7 @@ DEFAULT_LOCATION_NAME = "Amsterdam"
 #   0.5 means a 10 m/s headwind costs 5 m/s (18 km/h) of effective speed.
 # MIN_SPEED_KMH: floor speed so the model never gives absurd values.
 
-DEFAULT_SPEED_ROAD_KMH    = 25
-DEFAULT_SPEED_REGULAR_KMH = 20
+DEFAULT_SPEED_KMH         = 20
 SPEED_HEADWIND_FACTOR     = 0.5
 MIN_SPEED_KMH             = 8
 
@@ -78,7 +83,6 @@ MAX_CONCURRENT_REQUESTS = 5    # cap parallel Open-Meteo calls to avoid 429 rate
 
 NDW_PLANNING_URL    = "https://opendata.ndw.nu/planningsfeed_wegwerkzaamheden_en_evenementen.xml.gz"
 NDW_NS_SITUATION    = "http://datex2.eu/schema/3/situation"
-NDW_NS_CONTAINER    = "http://datex2.eu/schema/3/messageContainer"
 NDW_CLOSURE_TYPE    = "carriagewayClosures"
 
 CLOSURE_CACHE_TTL_HOURS  = 23     # refresh the cache if it is older than this
