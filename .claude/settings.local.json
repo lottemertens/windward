@@ -10,7 +10,11 @@
       "Bash(git checkout:*)",
       "Bash(git push:*)",
       "WebFetch(domain:www.nhbereikbaar.nl)",
-      "WebFetch(domain:opendata.ndw.nu)"
+      "WebFetch(domain:opendata.ndw.nu)",
+      "WebFetch(domain:ask.openrouteservice.org)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:giscience.github.io)",
+      "WebFetch(domain:openrouteservice.org)"
     ]
   }
 }

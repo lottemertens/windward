@@ -4,10 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Windward — Cycling Wind Planner</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚴</text></svg>" />
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <link rel="stylesheet" href="/static/style.css?v=3" />
+  <link rel="stylesheet" href="/static/style.css?v=9" />
 </head>
 <body>
 
@@ -16,7 +17,10 @@
   <!-- ── Sidebar ──────────────────────────────────────────────────── -->
   <aside id="sidebar">
 
-    <h1>Windward</h1>
+    <div id="header-row">
+      <h1>Windward</h1>
+      <button id="dark-toggle" title="Toggle dark mode">☀</button>
+    </div>
 
     <!-- Departure time + wind overview -->
     <section class="card">
@@ -65,7 +69,8 @@
       </div>
 
       <div class="secondary-btn-row">
-        <button id="undo-btn" disabled>Undo</button>
+        <button id="undo-btn"    disabled>Undo</button>
+        <button id="reverse-btn" disabled>⇄ Reverse</button>
         <button id="reset-btn">Reset</button>
       </div>
     </section>
@@ -73,6 +78,7 @@
     <!-- Route summary — shown after calculation -->
     <section class="card hidden" id="summary-card">
       <p class="card-label">Wind breakdown</p>
+      <p id="wind-verdict"></p>
       <div id="summary-bar">
         <div id="summary-tailwind"></div>
         <div id="summary-cross"></div>
@@ -86,6 +92,13 @@
       <button id="avoid-all-btn" class="hidden">⛔ Avoid all closures</button>
       <button id="maps-btn"     class="hidden">Open in Google Maps</button>
       <button id="export-btn"   class="hidden">Download GPX</button>
+    </section>
+
+    <!-- Best departure time — shown after a route is calculated -->
+    <section class="card hidden" id="departure-card">
+      <p class="card-label">Best time to depart</p>
+      <div id="departure-chart"></div>
+      <p id="departure-hint" class="departure-hint"></p>
     </section>
 
     <div id="status"></div>
@@ -129,6 +142,11 @@
       </div>
     </div>
 
+    <!-- Elevation profile — shown after a planned route is loaded -->
+    <div id="elevation-strip" class="hidden">
+      <svg id="elevation-svg" preserveAspectRatio="none"></svg>
+    </div>
+
     <!-- Route info strip — shown after a route is loaded -->
     <div id="route-info" class="hidden">
       <div class="info-item" id="info-distance">
@@ -154,6 +172,6 @@
 
 </div><!-- /app -->
 
-<script src="/static/app.js?v=3"></script>
+<script src="/static/app.js?v=9"></script>
 </body>
 </html>

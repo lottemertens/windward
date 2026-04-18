@@ -14,6 +14,7 @@ const windDateNote   = document.getElementById('wind-date-note');
 const instructions   = document.getElementById('instructions');
 const calculateBtn   = document.getElementById('calculate-btn');
 const undoBtn        = document.getElementById('undo-btn');
+const reverseBtn     = document.getElementById('reverse-btn');
 const resetBtn       = document.getElementById('reset-btn');
 const statusDiv      = document.getElementById('status');
 const summaryCard    = document.getElementById('summary-card');
@@ -40,6 +41,11 @@ const avoidAllBtn       = document.getElementById('avoid-all-btn');
 const mapsBtn           = document.getElementById('maps-btn');
 const closureLoadingEl  = document.getElementById('closure-loading');
 const addressSearch     = addressInput.parentElement;   // .address-search div
+const departureCard     = document.getElementById('departure-card');
+const departureChart    = document.getElementById('departure-chart');
+const departureHint     = document.getElementById('departure-hint');
+const elevationStrip    = document.getElementById('elevation-strip');
+const elevationSvg      = document.getElementById('elevation-svg');
 
 
 // ── App state ─────────────────────────────────────────────────────────
@@ -61,9 +67,10 @@ let lastRouteSegments = [];     // stored after each calculation, used for GPX e
 // allClosuresCache: session-level cache of the full /api/closures response.
 //   Populated on page load (background pre-warm) and reused on every route.
 //   No need to persist across page reloads — the server refreshes daily.
-let avoidedClosures  = [];
-let previewLayers    = [];
-let previewSegments  = [];
+let avoidedClosures      = [];
+let previewLayers        = [];
+let previewSegments      = [];
+let departureScoreGeneration = 0;  // incremented on each fetch; stale responses are discarded
 let previewArrows    = [];
 let allClosuresCache = null;
 
@@ -85,6 +92,37 @@ function windColour(headwindMs) {
   if (t <= 0) return `rgb(${Math.round(255 * (t + 1))}, 200, 0)`;
   return `rgb(255, ${Math.round(200 * (1 - t))}, 0)`;
 }
+
+
+// ── Dark mode ─────────────────────────────────────────────────────────
+// Persists the user's preference in localStorage. On load we apply any
+// saved preference; the OS media query handles the default automatically.
+
+const darkToggleBtn = document.getElementById('dark-toggle');
+
+(function applyStoredTheme() {
+  const stored = localStorage.getItem('theme');
+  if (stored) document.documentElement.setAttribute('data-theme', stored);
+  updateDarkToggleIcon();
+})();
+
+function updateDarkToggleIcon() {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
+    || (!document.documentElement.hasAttribute('data-theme')
+        && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  darkToggleBtn.textContent = isDark ? '☀' : '🌙';
+  darkToggleBtn.title = isDark ? 'Switch to light mode' : 'Switch to dark mode';
+}
+
+darkToggleBtn.addEventListener('click', () => {
+  const current = document.documentElement.getAttribute('data-theme');
+  const isDark  = current === 'dark'
+    || (!current && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  const next = isDark ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+  updateDarkToggleIcon();
+});
 
 
 // ── API error helper ──────────────────────────────────────────────────
@@ -446,7 +484,8 @@ function updateInstructions() {
 }
 
 function updateUndoBtn() {
-  undoBtn.disabled = planPoints.length === 0;
+  undoBtn.disabled    = planPoints.length === 0;
+  reverseBtn.disabled = planPoints.length < 2;
 }
 
 // Fetch a route from the API. avoidGeometries is an optional array of
@@ -469,6 +508,7 @@ async function _fetchRoute(avoidGeometries = []) {
 async function calculateOrsRoute() {
   setLoading(true);
   discardPreview();   // cancel any pending preview before a full recalculate
+  clearDepartureChart();  // clear stale scores immediately; fresh ones arrive after the route fetch
 
   try {
     const data = await _fetchRoute(avoidedClosures.map(c => c.geometry));
@@ -482,6 +522,7 @@ async function calculateOrsRoute() {
     showRouteInfo(data.route_info);
     exportBtn.classList.remove('hidden');
     mapsBtn.classList.remove('hidden');
+    fetchDepartureScores(planPoints.map(p => ({ lat: p.lat, lon: p.lng })));
 
   } catch (err) {
     statusDiv.textContent = `⚠ ${err.message}`;
@@ -604,6 +645,16 @@ avoidAllBtn.addEventListener('click', avoidAllClosures);
 calculateBtn.addEventListener('click', () => { avoidedClosures = []; calculateOrsRoute(); });
 undoBtn.addEventListener('click', undoLastPoint);
 
+reverseBtn.addEventListener('click', () => {
+  if (planPoints.length < 2) return;
+  // Reverse the array in place, move each marker to its new position,
+  // re-label everything, and recalculate.
+  planPoints.reverse();
+  planPoints.forEach(p => p.marker.setLatLng([p.lat, p.lng]));
+  refreshMarkerLabels();
+  calculateOrsRoute();
+});
+
 
 // ── Upload tab: GPX → route, then separate wind calculation ──────────
 gpxInput.addEventListener('change', () => {
@@ -666,6 +717,7 @@ windBtn.addEventListener('click', async () => {
     showArrival(data.duration_min);
     exportBtn.classList.remove('hidden');
     mapsBtn.classList.remove('hidden');
+    fetchDepartureScores(uploadedWaypoints);
 
   } catch (err) {
     statusDiv.textContent = `⚠ ${err.message}`;
@@ -683,10 +735,12 @@ resetBtn.addEventListener('click', () => {
   clearRoute();
   uploadedWaypoints = null;
   calculateBtn.disabled = true;
-  undoBtn.disabled = true;
+  undoBtn.disabled    = true;
+  reverseBtn.disabled = true;
   windBtn.classList.add('hidden');
   summaryCard.classList.add('hidden');
   routeInfo.classList.add('hidden');
+  clearDepartureChart();
   updateInstructions();
   statusDiv.textContent = '';
   gpxInput.value = '';
@@ -781,6 +835,63 @@ function _subsample(waypoints, maxPoints) {
 }
 
 
+// ── URL sharing ───────────────────────────────────────────────────────
+// Encodes the current route and departure time in the URL hash so the
+// page can be bookmarked or shared. Format:
+//   #lat,lon+lat,lon+...@YYYY-MM-DDTHH:MM
+// No backend needed — everything is in the fragment, which is never
+// sent to the server and works on any static host.
+
+function encodeRouteToHash() {
+  if (planPoints.length < 2) return;
+  const pts  = planPoints.map(p => `${p.lat.toFixed(5)},${p.lng.toFixed(5)}`).join('+');
+  const time = datetimeInput.value;   // YYYY-MM-DDTHH:MM
+  history.replaceState(null, '', `#${pts}@${time}`);
+}
+
+function restoreRouteFromHash() {
+  const hash = window.location.hash.slice(1);  // strip leading #
+  if (!hash) return;
+
+  const atIdx = hash.lastIndexOf('@');
+  if (atIdx === -1) return;
+
+  const ptsStr  = hash.slice(0, atIdx);
+  const timeStr = hash.slice(atIdx + 1);
+
+  const pairs = ptsStr.split('+').map(s => s.split(',').map(Number));
+  if (pairs.length < 2 || pairs.some(p => p.length !== 2 || p.some(isNaN))) return;
+
+  // Restore departure time
+  if (timeStr && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(timeStr)) {
+    datetimeInput.value = timeStr;
+    fetchWindOverview();
+  }
+
+  // Place waypoints and trigger a route calculation
+  pairs.forEach(([lat, lng], i) => {
+    const type   = i === 0 ? 'start' : i === pairs.length - 1 ? 'end' : 'via';
+    const marker = makePlanMarker(lat, lng, type);
+    planPoints.push({ lat, lng, marker, addedAt: pointCounter++ });
+  });
+  refreshMarkerLabels();
+  calculateBtn.disabled = false;
+  updateUndoBtn();
+  updateInstructions();
+  calculateOrsRoute();
+}
+
+// Encode whenever a route is successfully calculated
+const _origCalculateOrsRoute = calculateOrsRoute;
+calculateOrsRoute = async function() {
+  await _origCalculateOrsRoute();
+  if (planPoints.length >= 2) encodeRouteToHash();
+};
+
+// Restore on page load
+restoreRouteFromHash();
+
+
 // ── Drawing helpers ───────────────────────────────────────────────────
 
 // Draw segment polylines and return the layer array. Used by both the main
@@ -845,6 +956,7 @@ function clearRoute() {
   avoidAllBtn.classList.add('hidden');
   clearArrows();
   clearClosures();
+  clearElevationChart();
 }
 
 function clearArrows() {
@@ -866,7 +978,20 @@ function showSummary(segments) {
   document.getElementById('summary-tailwind').style.width  = tp + '%';
   document.getElementById('summary-cross').style.width     = cp + '%';
   document.getElementById('summary-headwind').style.width  = hp + '%';
+
+  const verdictEl = document.getElementById('wind-verdict');
+  verdictEl.textContent = windVerdict(Number(tp), Number(hp));
+
   summaryCard.classList.remove('hidden');
+}
+
+// Returns a one-line wind verdict based on tailwind / headwind percentages.
+function windVerdict(tailPct, headPct) {
+  if (tailPct >= 60) return '🟢 Mostly tailwind — enjoy the boost!';
+  if (headPct >= 60) return '🔴 Mostly headwind — brace yourself.';
+  if (tailPct >= 40) return '🟢 More tailwind than headwind.';
+  if (headPct >= 40) return '🔴 More headwind than tailwind.';
+  return '🟡 Mixed winds along this route.';
 }
 
 function showRouteInfo(info) {
@@ -874,6 +999,7 @@ function showRouteInfo(info) {
   routeInfo.classList.remove('hidden');
 
   showArrival(info.duration_min);
+  showElevationChart(info.elevations);
 
   const surfEl   = document.getElementById('val-surfaces');
   const surfItem = document.getElementById('info-surfaces');
@@ -919,10 +1045,160 @@ function showArrival(durationMin) {
   arrivalItem.classList.remove('hidden');
 }
 
+// ── Elevation profile ─────────────────────────────────────────────────
+// Draws a filled SVG area chart from an array of elevation values (metres).
+// Shown only for planned routes (ORS returns elevation); hidden for GPX uploads.
+
+function showElevationChart(elevations) {
+  if (!elevations || elevations.length < 2) {
+    elevationStrip.classList.add('hidden');
+    return;
+  }
+
+  const W = elevationSvg.clientWidth  || 600;
+  const H = elevationSvg.clientHeight || 60;
+  const PAD_TOP = 4;   // px above the highest point
+  const PAD_BOT = 16;  // px for the x-axis label area
+
+  const minE = Math.min(...elevations);
+  const maxE = Math.max(...elevations);
+  const range = maxE - minE || 1;
+
+  const xScale = (i) => (i / (elevations.length - 1)) * W;
+  const yScale = (e) => PAD_TOP + (1 - (e - minE) / range) * (H - PAD_TOP - PAD_BOT);
+
+  const pts = elevations.map((e, i) => `${xScale(i).toFixed(1)},${yScale(e).toFixed(1)}`).join(' ');
+  const first = `${xScale(0).toFixed(1)},${yScale(elevations[0]).toFixed(1)}`;
+  const last  = `${xScale(elevations.length - 1).toFixed(1)},${yScale(elevations[elevations.length - 1]).toFixed(1)}`;
+
+  // Colour: green (flat/downhill) → blue (climbing); we just use the accent colour
+  elevationSvg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  elevationSvg.innerHTML = `
+    <defs>
+      <linearGradient id="elev-grad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%"   stop-color="var(--accent)" stop-opacity="0.55"/>
+        <stop offset="100%" stop-color="var(--accent)" stop-opacity="0.08"/>
+      </linearGradient>
+    </defs>
+    <polygon points="${first} ${pts} ${last} ${xScale(elevations.length-1).toFixed(1)},${H} ${xScale(0).toFixed(1)},${H}"
+             fill="url(#elev-grad)" stroke="none"/>
+    <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linejoin="round"/>
+    <text x="2" y="${H - 2}" font-size="9" fill="var(--muted)">${Math.round(minE)} m</text>
+    <text x="${W - 2}" y="${H - 2}" font-size="9" fill="var(--muted)" text-anchor="end">${Math.round(maxE)} m</text>`;
+
+  elevationStrip.classList.remove('hidden');
+}
+
+function clearElevationChart() {
+  elevationStrip.classList.add('hidden');
+  elevationSvg.innerHTML = '';
+}
+
+// ── Best departure time ───────────────────────────────────────────────
+// Fetches a wind score for every departure hour of the selected day and
+// renders a clickable bar chart. Clicking a bar sets the departure time
+// to that hour and recalculates the route wind.
+
+async function fetchDepartureScores(waypoints) {
+  if (!waypoints || waypoints.length < 2) return;
+  departureCard.classList.remove('hidden');
+  departureChart.innerHTML = '<span class="departure-loading">Loading…</span>';
+  departureHint.textContent = '';
+
+  // Capture the generation at call time; if a newer fetch starts before this
+  // one resolves, we discard the stale result instead of overwriting the chart.
+  const gen = ++departureScoreGeneration;
+
+  try {
+    const res = await fetch('/api/departure-scores', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        waypoints:    waypoints,
+        datetime_iso: datetimeInput.value + ':00',
+        speed_kmh:    speedInput.value ? parseFloat(speedInput.value) : null,
+      }),
+    });
+    if (!res.ok || gen !== departureScoreGeneration) return;
+    const scores = await res.json();
+    if (gen !== departureScoreGeneration) return;
+    renderDepartureChart(scores);
+  } catch { /* best-effort — don't break the main flow */ }
+}
+
+function renderDepartureChart(scores) {
+  if (!scores.length) return;
+
+  // Find range for bar scaling
+  const values = scores.map(s => s.score);
+  const absMax = Math.max(...values.map(Math.abs), 0.5);
+
+  const selectedHour = parseInt(datetimeInput.value.slice(11, 13), 10);
+
+  // Find the best hour (lowest score = most tailwind)
+  const bestScore = Math.min(...values);
+  const bestHour  = scores.find(s => s.score === bestScore)?.hour;
+
+  departureChart.innerHTML = '';
+  scores.forEach(s => {
+    const col = document.createElement('div');
+    col.className = 'dep-col';
+    if (s.hour === selectedHour) col.classList.add('dep-col-active');
+
+    // Bar: height proportional to |score|, direction indicates head/tail
+    const barWrap = document.createElement('div');
+    barWrap.className = 'dep-bar-wrap';
+
+    const bar = document.createElement('div');
+    bar.className = 'dep-bar';
+    const heightPct = Math.round(Math.abs(s.score) / absMax * 100);
+    bar.style.height = `${Math.max(4, heightPct)}%`;
+    bar.style.background = windColour(s.score);
+
+    const label = document.createElement('span');
+    label.className = 'dep-label';
+    label.textContent = s.hour;
+
+    barWrap.appendChild(bar);
+    col.appendChild(barWrap);
+    col.appendChild(label);
+
+    col.addEventListener('click', () => {
+      // Set departure time to this hour, keeping the same date.
+      // Build the string in local time directly — toISOString() would give UTC
+      // and shift the hour in non-UTC timezones.
+      const datePart = datetimeInput.value.slice(0, 10);   // "YYYY-MM-DD"
+      const hour     = String(s.hour).padStart(2, '0');
+      datetimeInput.value = `${datePart}T${hour}:00`;
+      datetimeInput.dispatchEvent(new Event('change'));   // update wind widget
+      if (planPoints.length >= 2) calculateOrsRoute();
+      else if (uploadedWaypoints) {
+        // Redraw scores with the new hour highlighted
+        renderDepartureChart(scores);
+      }
+    });
+
+    departureChart.appendChild(col);
+  });
+
+  if (bestHour !== undefined) {
+    const period = bestHour < 12 ? 'am' : 'pm';
+    const h12    = bestHour % 12 || 12;
+    departureHint.textContent = `Best: ${h12}${period} (most tailwind)`;
+  }
+}
+
+function clearDepartureChart() {
+  departureCard.classList.add('hidden');
+  departureChart.innerHTML = '';
+  departureHint.textContent = '';
+}
+
 function setLoading(on) {
   loadingOverlay.classList.toggle('hidden', !on);
   calculateBtn.disabled = on;
   undoBtn.disabled      = on || planPoints.length === 0;
+  reverseBtn.disabled   = on || planPoints.length < 2;
   uploadBtn.disabled    = on;
   windBtn.disabled      = on;
   statusDiv.textContent = '';
