@@ -7,7 +7,7 @@
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <link rel="stylesheet" href="/static/style.css?v=3" />
+  <link rel="stylesheet" href="/static/style.css?v=4" />
 </head>
 <body>
 
@@ -137,6 +137,11 @@
       </div>
     </div>
 
+    <!-- Elevation profile — shown after a planned route is loaded -->
+    <div id="elevation-strip" class="hidden">
+      <svg id="elevation-svg" preserveAspectRatio="none"></svg>
+    </div>
+
     <!-- Route info strip — shown after a route is loaded -->
     <div id="route-info" class="hidden">
       <div class="info-item" id="info-distance">
@@ -162,6 +167,6 @@
 
 </div><!-- /app -->
 
-<script src="/static/app.js?v=3"></script>
+<script src="/static/app.js?v=4"></script>
 </body>
 </html>

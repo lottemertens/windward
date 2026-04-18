@@ -918,6 +918,7 @@ function clearRoute() {
   avoidAllBtn.classList.add('hidden');
   clearArrows();
   clearClosures();
+  clearElevationChart();
 }
 
 function clearArrows() {
@@ -947,6 +948,7 @@ function showRouteInfo(info) {
   routeInfo.classList.remove('hidden');
 
   showArrival(info.duration_min);
+  showElevationChart(info.elevations);
 
   const surfEl   = document.getElementById('val-surfaces');
   const surfItem = document.getElementById('info-surfaces');
@@ -990,6 +992,58 @@ function showArrival(durationMin) {
 
   document.getElementById('val-arrival').textContent = `${duration} · ${arrivalStr}`;
   arrivalItem.classList.remove('hidden');
+}
+
+// ── Elevation profile ─────────────────────────────────────────────────
+// Draws a filled SVG area chart from an array of elevation values (metres).
+// Shown only for planned routes (ORS returns elevation); hidden for GPX uploads.
+
+const elevationStrip = document.getElementById('elevation-strip');
+const elevationSvg   = document.getElementById('elevation-svg');
+
+function showElevationChart(elevations) {
+  if (!elevations || elevations.length < 2) {
+    elevationStrip.classList.add('hidden');
+    return;
+  }
+
+  const W = elevationSvg.clientWidth  || 600;
+  const H = elevationSvg.clientHeight || 60;
+  const PAD_TOP = 4;   // px above the highest point
+  const PAD_BOT = 16;  // px for the x-axis label area
+
+  const minE = Math.min(...elevations);
+  const maxE = Math.max(...elevations);
+  const range = maxE - minE || 1;
+
+  const xScale = (i) => (i / (elevations.length - 1)) * W;
+  const yScale = (e) => PAD_TOP + (1 - (e - minE) / range) * (H - PAD_TOP - PAD_BOT);
+
+  const pts = elevations.map((e, i) => `${xScale(i).toFixed(1)},${yScale(e).toFixed(1)}`).join(' ');
+  const first = `${xScale(0).toFixed(1)},${yScale(elevations[0]).toFixed(1)}`;
+  const last  = `${xScale(elevations.length - 1).toFixed(1)},${yScale(elevations[elevations.length - 1]).toFixed(1)}`;
+
+  // Colour: green (flat/downhill) → blue (climbing); we just use the accent colour
+  elevationSvg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  elevationSvg.innerHTML = `
+    <defs>
+      <linearGradient id="elev-grad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%"   stop-color="var(--accent)" stop-opacity="0.55"/>
+        <stop offset="100%" stop-color="var(--accent)" stop-opacity="0.08"/>
+      </linearGradient>
+    </defs>
+    <polygon points="${first} ${pts} ${last} ${xScale(elevations.length-1).toFixed(1)},${H} ${xScale(0).toFixed(1)},${H}"
+             fill="url(#elev-grad)" stroke="none"/>
+    <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linejoin="round"/>
+    <text x="2" y="${H - 2}" font-size="9" fill="var(--muted)">${Math.round(minE)} m</text>
+    <text x="${W - 2}" y="${H - 2}" font-size="9" fill="var(--muted)" text-anchor="end">${Math.round(maxE)} m</text>`;
+
+  elevationStrip.classList.remove('hidden');
+}
+
+function clearElevationChart() {
+  elevationStrip.classList.add('hidden');
+  elevationSvg.innerHTML = '';
 }
 
 // ── Best departure time ───────────────────────────────────────────────

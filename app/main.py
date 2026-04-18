@@ -66,6 +66,7 @@ class RouteInfoModel(BaseModel):
     surfaces:     list[SurfaceModel]   # empty for uploaded routes
     warnings:     list[str]            # empty for uploaded routes
     duration_min: Optional[int] = None # estimated riding time (timed wind only)
+    elevations:   list[float]  = []    # metres, parallel to ORS route waypoints (empty for GPX uploads)
 
 
 # --- /api/geocode  (address search via ORS) --------------------------------
@@ -181,6 +182,7 @@ async def calculate_route(request: RouteRequest):
         surfaces=[SurfaceModel(name=s.name, distance_km=s.distance_km, percentage=s.percentage)
                   for s in result.surfaces],
         warnings=result.warnings,
+        elevations=result.elevations,
     )
 
 
@@ -405,6 +407,7 @@ async def _build_route_response(
     surfaces: list[SurfaceModel],
     warnings: list[str],
     speed_kmh: Optional[float] = None,
+    elevations: list[float] = [],
 ) -> RouteResponse:
     try:
         if speed_kmh:
@@ -440,6 +443,7 @@ async def _build_route_response(
             surfaces=surfaces,
             warnings=warnings,
             duration_min=duration_min,
+            elevations=elevations,
         ),
     )
 
