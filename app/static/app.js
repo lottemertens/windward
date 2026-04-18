@@ -14,6 +14,7 @@ const windDateNote   = document.getElementById('wind-date-note');
 const instructions   = document.getElementById('instructions');
 const calculateBtn   = document.getElementById('calculate-btn');
 const undoBtn        = document.getElementById('undo-btn');
+const reverseBtn     = document.getElementById('reverse-btn');
 const resetBtn       = document.getElementById('reset-btn');
 const statusDiv      = document.getElementById('status');
 const summaryCard    = document.getElementById('summary-card');
@@ -446,7 +447,8 @@ function updateInstructions() {
 }
 
 function updateUndoBtn() {
-  undoBtn.disabled = planPoints.length === 0;
+  undoBtn.disabled    = planPoints.length === 0;
+  reverseBtn.disabled = planPoints.length < 2;
 }
 
 // Fetch a route from the API. avoidGeometries is an optional array of
@@ -605,6 +607,16 @@ avoidAllBtn.addEventListener('click', avoidAllClosures);
 calculateBtn.addEventListener('click', () => { avoidedClosures = []; calculateOrsRoute(); });
 undoBtn.addEventListener('click', undoLastPoint);
 
+reverseBtn.addEventListener('click', () => {
+  if (planPoints.length < 2) return;
+  // Reverse the array in place, move each marker to its new position,
+  // re-label everything, and recalculate.
+  planPoints.reverse();
+  planPoints.forEach(p => p.marker.setLatLng([p.lat, p.lng]));
+  refreshMarkerLabels();
+  calculateOrsRoute();
+});
+
 
 // ── Upload tab: GPX → route, then separate wind calculation ──────────
 gpxInput.addEventListener('change', () => {
@@ -685,7 +697,8 @@ resetBtn.addEventListener('click', () => {
   clearRoute();
   uploadedWaypoints = null;
   calculateBtn.disabled = true;
-  undoBtn.disabled = true;
+  undoBtn.disabled    = true;
+  reverseBtn.disabled = true;
   windBtn.classList.add('hidden');
   summaryCard.classList.add('hidden');
   routeInfo.classList.add('hidden');
@@ -1023,6 +1036,7 @@ function setLoading(on) {
   loadingOverlay.classList.toggle('hidden', !on);
   calculateBtn.disabled = on;
   undoBtn.disabled      = on || planPoints.length === 0;
+  reverseBtn.disabled   = on || planPoints.length < 2;
   uploadBtn.disabled    = on;
   windBtn.disabled      = on;
   statusDiv.textContent = '';
