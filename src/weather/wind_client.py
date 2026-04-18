@@ -13,6 +13,7 @@ Archive API docs:  https://open-meteo.com/en/docs/historical-weather-api
 import asyncio
 import math
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 import httpx
 
 from src.models import Coordinate, WindSample
@@ -27,6 +28,8 @@ from src.config import (
     MAX_CONCURRENT_REQUESTS,
     SPEED_HEADWIND_FACTOR,
     MIN_SPEED_KMH,
+    DEPARTURE_SCORE_HOUR_START,
+    DEPARTURE_SCORE_HOUR_END,
 )
 
 
@@ -112,22 +115,59 @@ async def get_wind_along_route_timed(
     """
     if not waypoints:
         return [], 0
+    sampled, raw_forecasts = await _sample_and_fetch(waypoints, departure_at)
+    return _timed_wind_pass(sampled, raw_forecasts, departure_at, speed_kmh)
 
+
+async def score_departure_times(
+    waypoints: list[Coordinate],
+    departure_at: datetime,
+    speed_kmh: Optional[float],
+) -> tuple[list[Coordinate], list[tuple[int, list[WindSample]]]]:
+    """
+    Compute wind samples for every departure hour across one day.
+
+    Fetches 48 h of forecast data ONCE for all sample locations (same
+    cost as a single timed-wind call), then runs the timed or static
+    wind pass for each hour in pure Python — no extra API calls.
+
+    Returns (sampled_waypoints, [(hour, wind_samples), ...]) so the
+    caller can run analyse_route_wind and compute a score per hour.
+    """
+    if not waypoints:
+        return [], []
+    sampled, raw_forecasts = await _sample_and_fetch(waypoints, departure_at)
+    hours = range(DEPARTURE_SCORE_HOUR_START, DEPARTURE_SCORE_HOUR_END)
+    results = []
+    for hour in hours:
+        dt = departure_at.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if speed_kmh:
+            wind_samples, _ = _timed_wind_pass(sampled, raw_forecasts, dt, speed_kmh)
+        else:
+            wind_samples = [_interpolate_at_time(f, dt) for f in raw_forecasts]
+        results.append((hour, wind_samples))
+    return sampled, results
+
+
+# ── Helpers for time-dependent wind ──────────────────────────────────────────
+
+async def _sample_and_fetch(
+    waypoints: list[Coordinate],
+    departure_at: datetime,
+) -> tuple[list[Coordinate], list[dict]]:
+    """
+    Evenly sample the route and fetch 48 h forecasts for each sample point.
+    Shared by get_wind_along_route_timed and score_departure_times so the
+    sampling + fetch logic lives in exactly one place.
+    """
     distance_km = route_distance_km(waypoints)
     n    = int(distance_km / SAMPLE_SPACING_KM)
     n    = max(MIN_SAMPLES, min(MAX_SAMPLES, n))
     step = len(waypoints) / n
     sampled = [waypoints[int(i * step)] for i in range(n)]
-
-    # Phase 1: parallel fetch — each location gets 2 days so we always
-    # have the hour before AND after any estimated arrival time.
     raw_forecasts = await _fetch_48h_parallel(sampled, departure_at)
+    return sampled, raw_forecasts
 
-    # Phase 2: sequential timing pass (pure Python, no I/O)
-    return _timed_wind_pass(sampled, raw_forecasts, departure_at, speed_kmh)
-
-
-# ── Helpers for time-dependent wind ──────────────────────────────────────────
 
 async def _fetch_48h_parallel(
     sampled: list[Coordinate],

@@ -47,6 +47,13 @@ DEFAULT_SPEED_KMH         = 20
 SPEED_HEADWIND_FACTOR     = 0.5
 MIN_SPEED_KMH             = 8
 
+# --- Best departure time chart --------------------------------------------
+# Hours checked when scoring departure times. Covers a full cycling day
+# from early morning to early evening.
+
+DEPARTURE_SCORE_HOUR_START = 6    # inclusive (06:00)
+DEPARTURE_SCORE_HOUR_END   = 21   # exclusive  (last bar = 20:00)
+
 # --- Wind arrow display ---------------------------------------------------
 # Arrows are shown every ARROW_SPACING_KM along the route, independent of
 # how many wind samples were fetched. More frequent than samples is fine

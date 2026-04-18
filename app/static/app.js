@@ -482,6 +482,7 @@ async function calculateOrsRoute() {
     showRouteInfo(data.route_info);
     exportBtn.classList.remove('hidden');
     mapsBtn.classList.remove('hidden');
+    fetchDepartureScores(planPoints.map(p => ({ lat: p.lat, lon: p.lng })));
 
   } catch (err) {
     statusDiv.textContent = `⚠ ${err.message}`;
@@ -666,6 +667,7 @@ windBtn.addEventListener('click', async () => {
     showArrival(data.duration_min);
     exportBtn.classList.remove('hidden');
     mapsBtn.classList.remove('hidden');
+    fetchDepartureScores(uploadedWaypoints);
 
   } catch (err) {
     statusDiv.textContent = `⚠ ${err.message}`;
@@ -687,6 +689,7 @@ resetBtn.addEventListener('click', () => {
   windBtn.classList.add('hidden');
   summaryCard.classList.add('hidden');
   routeInfo.classList.add('hidden');
+  clearDepartureChart();
   updateInstructions();
   statusDiv.textContent = '';
   gpxInput.value = '';
@@ -917,6 +920,103 @@ function showArrival(durationMin) {
 
   document.getElementById('val-arrival').textContent = `${duration} · ${arrivalStr}`;
   arrivalItem.classList.remove('hidden');
+}
+
+// ── Best departure time ───────────────────────────────────────────────
+// Fetches a wind score for every departure hour of the selected day and
+// renders a clickable bar chart. Clicking a bar sets the departure time
+// to that hour and recalculates the route wind.
+
+const departureCard  = document.getElementById('departure-card');
+const departureChart = document.getElementById('departure-chart');
+const departureHint  = document.getElementById('departure-hint');
+
+async function fetchDepartureScores(waypoints) {
+  if (!waypoints || waypoints.length < 2) return;
+  departureCard.classList.remove('hidden');
+  departureChart.innerHTML = '<span class="departure-loading">Loading…</span>';
+  departureHint.textContent = '';
+
+  try {
+    const res = await fetch('/api/departure-scores', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        waypoints:    waypoints,
+        datetime_iso: datetimeInput.value + ':00',
+        speed_kmh:    speedInput.value ? parseFloat(speedInput.value) : null,
+      }),
+    });
+    if (!res.ok) return;
+    const scores = await res.json();
+    renderDepartureChart(scores);
+  } catch { /* best-effort — don't break the main flow */ }
+}
+
+function renderDepartureChart(scores) {
+  if (!scores.length) return;
+
+  // Find range for bar scaling
+  const values = scores.map(s => s.score);
+  const absMax = Math.max(...values.map(Math.abs), 0.5);
+
+  const selectedHour = new Date(datetimeInput.value).getHours();
+
+  // Find the best hour (lowest score = most tailwind)
+  const bestScore = Math.min(...values);
+  const bestHour  = scores.find(s => s.score === bestScore)?.hour;
+
+  departureChart.innerHTML = '';
+  scores.forEach(s => {
+    const col = document.createElement('div');
+    col.className = 'dep-col';
+    if (s.hour === selectedHour) col.classList.add('dep-col-active');
+
+    // Bar: height proportional to |score|, direction indicates head/tail
+    const barWrap = document.createElement('div');
+    barWrap.className = 'dep-bar-wrap';
+
+    const bar = document.createElement('div');
+    bar.className = 'dep-bar';
+    const heightPct = Math.round(Math.abs(s.score) / absMax * 100);
+    bar.style.height = `${Math.max(4, heightPct)}%`;
+    bar.style.background = windColour(s.score);
+
+    const label = document.createElement('span');
+    label.className = 'dep-label';
+    label.textContent = s.hour;
+
+    barWrap.appendChild(bar);
+    col.appendChild(barWrap);
+    col.appendChild(label);
+
+    col.addEventListener('click', () => {
+      // Set departure time to this hour, keeping the same date
+      const current = new Date(datetimeInput.value);
+      current.setHours(s.hour, 0, 0, 0);
+      datetimeInput.value = current.toISOString().slice(0, 16);
+      datetimeInput.dispatchEvent(new Event('change'));   // update wind widget
+      if (planPoints.length >= 2) calculateOrsRoute();
+      else if (uploadedWaypoints) {
+        // Redraw scores with the new hour highlighted
+        renderDepartureChart(scores);
+      }
+    });
+
+    departureChart.appendChild(col);
+  });
+
+  if (bestHour !== undefined) {
+    const period = bestHour < 12 ? 'am' : 'pm';
+    const h12    = bestHour % 12 || 12;
+    departureHint.textContent = `Best: ${h12}${period} (most tailwind)`;
+  }
+}
+
+function clearDepartureChart() {
+  departureCard.classList.add('hidden');
+  departureChart.innerHTML = '';
+  departureHint.textContent = '';
 }
 
 function setLoading(on) {
