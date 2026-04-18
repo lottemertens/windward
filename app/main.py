@@ -26,7 +26,7 @@ from pydantic import BaseModel
 import httpx
 
 from src.routing.ors_client import get_cycling_route
-from src.weather.wind_client import get_wind_along_route, get_wind_along_route_timed, get_wind_at
+from src.weather.wind_client import get_wind_along_route, get_wind_along_route_timed, get_wind_at, score_departure_times
 from src.analysis.wind_analysis import analyse_route_wind, generate_display_arrows
 from src.gpx_parser import parse_gpx
 from src.geo import route_distance_km
@@ -66,6 +66,7 @@ class RouteInfoModel(BaseModel):
     surfaces:     list[SurfaceModel]   # empty for uploaded routes
     warnings:     list[str]            # empty for uploaded routes
     duration_min: Optional[int] = None # estimated riding time (timed wind only)
+    elevations:   list[float]  = []    # metres, parallel to ORS route waypoints (empty for GPX uploads)
 
 
 # --- /api/geocode  (address search via ORS) --------------------------------
@@ -181,6 +182,7 @@ async def calculate_route(request: RouteRequest):
         surfaces=[SurfaceModel(name=s.name, distance_km=s.distance_km, percentage=s.percentage)
                   for s in result.surfaces],
         warnings=result.warnings,
+        elevations=result.elevations,
     )
 
 
@@ -261,6 +263,47 @@ async def calculate_wind_overlay(request: WindOverlayRequest):
         ],
         duration_min=duration_min,
     )
+
+
+# --- /api/departure-scores  (wind score per departure hour) ---------------
+
+class DepartureScoresRequest(BaseModel):
+    waypoints:    list[WaypointModel]
+    datetime_iso: str                   # any time on the target day — only date matters
+    speed_kmh:    Optional[float] = None
+
+class DepartureScoreItem(BaseModel):
+    hour:  int    # 0–23
+    score: float  # mean headwind_ms along route (negative = net tailwind)
+
+@app.post("/api/departure-scores", response_model=list[DepartureScoreItem])
+async def get_departure_scores(request: DepartureScoresRequest):
+    """
+    Return the mean headwind score for each departure hour across one day.
+
+    All sample locations are fetched once in parallel (same cost as one
+    route wind call), then the timed or static wind pass runs in pure
+    Python for each hour — no extra API calls per hour.
+
+    Lower score = more tailwind. Useful for picking the best time to ride.
+    """
+    at = _parse_datetime(request.datetime_iso)
+    waypoints = [Coordinate(lat=w.lat, lon=w.lon) for w in request.waypoints]
+
+    try:
+        sampled, hourly = await score_departure_times(waypoints, at, request.speed_kmh)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    scores = []
+    for hour, wind_samples in hourly:
+        segments = analyse_route_wind(sampled, wind_samples)
+        if segments:
+            mean_headwind = sum(s.headwind_ms for s in segments) / len(segments)
+        else:
+            mean_headwind = 0.0
+        scores.append(DepartureScoreItem(hour=hour, score=round(mean_headwind, 2)))
+    return scores
 
 
 # --- /api/closures  (cached NDW road closures) ----------------------------
@@ -364,6 +407,7 @@ async def _build_route_response(
     surfaces: list[SurfaceModel],
     warnings: list[str],
     speed_kmh: Optional[float] = None,
+    elevations: list[float] = [],
 ) -> RouteResponse:
     try:
         if speed_kmh:
@@ -399,6 +443,7 @@ async def _build_route_response(
             surfaces=surfaces,
             warnings=warnings,
             duration_min=duration_min,
+            elevations=elevations,
         ),
     )
 

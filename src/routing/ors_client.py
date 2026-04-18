@@ -51,9 +51,10 @@ class SurfaceSummary:
 
 @dataclass
 class OrsRouteResult:
-    waypoints: list[Coordinate]
-    surfaces:  list[SurfaceSummary] = field(default_factory=list)
-    warnings:  list[str]           = field(default_factory=list)
+    waypoints:  list[Coordinate]
+    surfaces:   list[SurfaceSummary] = field(default_factory=list)
+    warnings:   list[str]            = field(default_factory=list)
+    elevations: list[float]          = field(default_factory=list)  # metres, parallel to waypoints
 
 
 async def get_cycling_route(
@@ -78,6 +79,7 @@ async def get_cycling_route(
         # ORS expects [lon, lat] order — we flip from our internal (lat, lon).
         "coordinates": [[w.lon, w.lat] for w in waypoints],
         "extra_info": ["surface"],
+        "elevation":   True,
         "preference":  ORS_ROUTE_PREFERENCE,
         "options": {
             "avoid_features": ORS_AVOID_FEATURES,
@@ -106,15 +108,14 @@ def _parse_route_response(data: dict) -> OrsRouteResult:
     feature    = data["features"][0]
     properties = feature["properties"]
 
-    waypoints = [
-        Coordinate(lat=coord[1], lon=coord[0])
-        for coord in feature["geometry"]["coordinates"]
-    ]
+    coords = feature["geometry"]["coordinates"]
+    waypoints  = [Coordinate(lat=c[1], lon=c[0]) for c in coords]
+    elevations = [c[2] for c in coords if len(c) > 2]
 
     surfaces = _parse_surfaces(properties.get("extras", {}).get("surface", {}))
     warnings = [w.get("message", "") for w in properties.get("warnings", [])]
 
-    return OrsRouteResult(waypoints=waypoints, surfaces=surfaces, warnings=warnings)
+    return OrsRouteResult(waypoints=waypoints, surfaces=surfaces, warnings=warnings, elevations=elevations)
 
 
 def _parse_surfaces(surface_data: dict) -> list[SurfaceSummary]:
