@@ -37,6 +37,7 @@ const rerouteBar        = document.getElementById('reroute-bar');
 const acceptRerouteBtn  = document.getElementById('accept-reroute-btn');
 const discardRerouteBtn = document.getElementById('discard-reroute-btn');
 const avoidAllBtn       = document.getElementById('avoid-all-btn');
+const mapsBtn           = document.getElementById('maps-btn');
 const closureLoadingEl  = document.getElementById('closure-loading');
 const addressSearch     = addressInput.parentElement;   // .address-search div
 
@@ -480,6 +481,7 @@ async function calculateOrsRoute() {
     showSummary(data.segments);
     showRouteInfo(data.route_info);
     exportBtn.classList.remove('hidden');
+    mapsBtn.classList.remove('hidden');
 
   } catch (err) {
     statusDiv.textContent = `⚠ ${err.message}`;
@@ -663,6 +665,7 @@ windBtn.addEventListener('click', async () => {
     showSummary(data.segments);
     showArrival(data.duration_min);
     exportBtn.classList.remove('hidden');
+    mapsBtn.classList.remove('hidden');
 
   } catch (err) {
     statusDiv.textContent = `⚠ ${err.message}`;
@@ -729,9 +732,52 @@ ${trkpts}
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href     = url;
-  a.download = 'komootlayer-route.gpx';
+  a.download = 'windward-route.gpx';
   a.click();
   URL.revokeObjectURL(url);
+}
+
+
+// ── Open in Google Maps ───────────────────────────────────────────────
+// Builds a Google Maps directions URL from the current route waypoints.
+// On mobile, tapping the link opens the Google Maps app directly.
+// Google Maps supports up to 9 intermediate waypoints in the URL, so
+// uploaded GPX tracks are subsampled to fit within that limit.
+const GMAPS_MAX_WAYPOINTS = 9;   // Google Maps URL limit for intermediate stops
+
+mapsBtn.addEventListener('click', openInGoogleMaps);
+
+function openInGoogleMaps() {
+  // Prefer the user-placed plan points (exact stops); fall back to the
+  // uploaded waypoints subsampled to stay under the Google Maps URL limit.
+  let wps;
+  if (planPoints.length >= 2) {
+    wps = planPoints.map(p => ({ lat: p.lat, lon: p.lng }));
+  } else if (uploadedWaypoints && uploadedWaypoints.length >= 2) {
+    wps = _subsample(uploadedWaypoints, GMAPS_MAX_WAYPOINTS + 2);  // +2 for origin + destination
+  } else {
+    return;
+  }
+
+  const fmt    = p => `${p.lat},${p.lon}`;
+  const origin = fmt(wps[0]);
+  const dest   = fmt(wps[wps.length - 1]);
+  const vias   = wps.slice(1, -1).map(fmt).join('|');
+
+  let url = `https://www.google.com/maps/dir/?api=1&travelmode=bicycling&origin=${origin}&destination=${dest}`;
+  if (vias) url += `&waypoints=${encodeURIComponent(vias)}`;
+
+  window.open(url, '_blank');
+}
+
+function _subsample(waypoints, maxPoints) {
+  if (waypoints.length <= maxPoints) return waypoints;
+  const result = [];
+  const step   = (waypoints.length - 1) / (maxPoints - 1);
+  for (let i = 0; i < maxPoints; i++) {
+    result.push(waypoints[Math.round(i * step)]);
+  }
+  return result;
 }
 
 
@@ -795,6 +841,7 @@ function clearRoute() {
   previewArrows     = [];
   rerouteBar.classList.add('hidden');
   exportBtn.classList.add('hidden');
+  mapsBtn.classList.add('hidden');
   avoidAllBtn.classList.add('hidden');
   clearArrows();
   clearClosures();
