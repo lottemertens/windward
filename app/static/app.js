@@ -797,6 +797,63 @@ function _subsample(waypoints, maxPoints) {
 }
 
 
+// ── URL sharing ───────────────────────────────────────────────────────
+// Encodes the current route and departure time in the URL hash so the
+// page can be bookmarked or shared. Format:
+//   #lat,lon+lat,lon+...@YYYY-MM-DDTHH:MM
+// No backend needed — everything is in the fragment, which is never
+// sent to the server and works on any static host.
+
+function encodeRouteToHash() {
+  if (planPoints.length < 2) return;
+  const pts  = planPoints.map(p => `${p.lat.toFixed(5)},${p.lng.toFixed(5)}`).join('+');
+  const time = datetimeInput.value;   // YYYY-MM-DDTHH:MM
+  history.replaceState(null, '', `#${pts}@${time}`);
+}
+
+function restoreRouteFromHash() {
+  const hash = window.location.hash.slice(1);  // strip leading #
+  if (!hash) return;
+
+  const atIdx = hash.lastIndexOf('@');
+  if (atIdx === -1) return;
+
+  const ptsStr  = hash.slice(0, atIdx);
+  const timeStr = hash.slice(atIdx + 1);
+
+  const pairs = ptsStr.split('+').map(s => s.split(',').map(Number));
+  if (pairs.length < 2 || pairs.some(p => p.length !== 2 || p.some(isNaN))) return;
+
+  // Restore departure time
+  if (timeStr && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(timeStr)) {
+    datetimeInput.value = timeStr;
+    fetchWindOverview();
+  }
+
+  // Place waypoints and trigger a route calculation
+  pairs.forEach(([lat, lng], i) => {
+    const type   = i === 0 ? 'start' : i === pairs.length - 1 ? 'end' : 'via';
+    const marker = makePlanMarker(lat, lng, type);
+    planPoints.push({ lat, lng, marker, addedAt: pointCounter++ });
+  });
+  refreshMarkerLabels();
+  calculateBtn.disabled = false;
+  updateUndoBtn();
+  updateInstructions();
+  calculateOrsRoute();
+}
+
+// Encode whenever a route is successfully calculated
+const _origCalculateOrsRoute = calculateOrsRoute;
+calculateOrsRoute = async function() {
+  await _origCalculateOrsRoute();
+  if (planPoints.length >= 2) encodeRouteToHash();
+};
+
+// Restore on page load
+restoreRouteFromHash();
+
+
 // ── Drawing helpers ───────────────────────────────────────────────────
 
 // Draw segment polylines and return the layer array. Used by both the main
