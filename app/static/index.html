@@ -38,9 +38,13 @@
 
       <!-- Plan tab -->
       <div id="panel-plan">
-        <div class="bike-toggle">
-          <button class="bike-btn active" id="btn-road">Road bike</button>
-          <button class="bike-btn"        id="btn-regular">Regular bike</button>
+        <div class="speed-row">
+          <label for="speed-input">Riding speed</label>
+          <div class="speed-input-wrap">
+            <input type="number" id="speed-input" min="5" max="60" step="1" value="20" />
+            <span class="speed-unit">km/h</span>
+          </div>
+          <p class="speed-hint">Clear to use static wind (best for short rides)</p>
         </div>
         <div class="address-search">
           <input type="text" id="address-input" placeholder="Search address…" autocomplete="off" />
@@ -130,6 +134,10 @@
         <span class="info-icon">📍</span>
         <span class="info-value" id="val-distance">–</span>
         <span class="info-unit">km</span>
+      </div>
+      <div class="info-item hidden" id="info-arrival">
+        <span class="info-icon">🕐</span>
+        <span class="info-value" id="val-arrival">–</span>
       </div>
       <div class="info-item" id="info-surfaces">
         <span class="info-icon">🛣</span>
