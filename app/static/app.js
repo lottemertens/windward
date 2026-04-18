@@ -88,6 +88,37 @@ function windColour(headwindMs) {
 }
 
 
+// ── Dark mode ─────────────────────────────────────────────────────────
+// Persists the user's preference in localStorage. On load we apply any
+// saved preference; the OS media query handles the default automatically.
+
+const darkToggleBtn = document.getElementById('dark-toggle');
+
+(function applyStoredTheme() {
+  const stored = localStorage.getItem('theme');
+  if (stored) document.documentElement.setAttribute('data-theme', stored);
+  updateDarkToggleIcon();
+})();
+
+function updateDarkToggleIcon() {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
+    || (!document.documentElement.hasAttribute('data-theme')
+        && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  darkToggleBtn.textContent = isDark ? '☀' : '🌙';
+  darkToggleBtn.title = isDark ? 'Switch to light mode' : 'Switch to dark mode';
+}
+
+darkToggleBtn.addEventListener('click', () => {
+  const current = document.documentElement.getAttribute('data-theme');
+  const isDark  = current === 'dark'
+    || (!current && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  const next = isDark ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+  updateDarkToggleIcon();
+});
+
+
 // ── API error helper ──────────────────────────────────────────────────
 // Safely extract an error message from a non-OK response. If the body
 // isn't valid JSON (e.g. a 503 HTML page from Render during cold start),
@@ -940,7 +971,20 @@ function showSummary(segments) {
   document.getElementById('summary-tailwind').style.width  = tp + '%';
   document.getElementById('summary-cross').style.width     = cp + '%';
   document.getElementById('summary-headwind').style.width  = hp + '%';
+
+  const verdictEl = document.getElementById('wind-verdict');
+  verdictEl.textContent = windVerdict(Number(tp), Number(hp));
+
   summaryCard.classList.remove('hidden');
+}
+
+// Returns a one-line wind verdict based on tailwind / headwind percentages.
+function windVerdict(tailPct, headPct) {
+  if (tailPct >= 60) return '🟢 Mostly tailwind — enjoy the boost!';
+  if (headPct >= 60) return '🔴 Mostly headwind — brace yourself.';
+  if (tailPct >= 40) return '🟢 More tailwind than headwind.';
+  if (headPct >= 40) return '🔴 More headwind than tailwind.';
+  return '🟡 Mixed winds along this route.';
 }
 
 function showRouteInfo(info) {

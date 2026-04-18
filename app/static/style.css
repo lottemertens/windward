@@ -13,6 +13,27 @@
   --radius:      12px;
 }
 
+/* Dark theme — applied via [data-theme="dark"] on <html> (manual toggle)
+   or automatically when the OS is in dark mode. */
+[data-theme="dark"] {
+  --bg:      #0f1923;
+  --surface: #1c2c3e;
+  --border:  #2e4260;
+  --text:    #e0e8f0;
+  --muted:   #7a93ad;
+  --shadow:  0 2px 12px rgba(0,0,0,0.4);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:      #0f1923;
+    --surface: #1c2c3e;
+    --border:  #2e4260;
+    --text:    #e0e8f0;
+    --muted:   #7a93ad;
+    --shadow:  0 2px 12px rgba(0,0,0,0.4);
+  }
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background: var(--bg);
@@ -40,12 +61,30 @@ body {
   overflow-y: auto;
 }
 
+#header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 2px;
+}
+
 #sidebar h1 {
   font-size: 1.2rem;
   font-weight: 700;
-  padding: 4px 2px;
   letter-spacing: -0.3px;
 }
+
+#dark-toggle {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px 8px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  color: var(--muted);
+  line-height: 1;
+}
+#dark-toggle:hover { background: var(--bg); }
 
 /* ── Cards ───────────────────────────────────────────────────────────── */
 .card {
@@ -256,6 +295,13 @@ button {
 #summary-labels .cross { color: #9a7000; }
 #summary-labels .head  { color: #b80000; }
 
+#wind-verdict {
+  font-size: 0.82rem;
+  color: var(--text);
+  margin: 6px 0 2px;
+  font-weight: 500;
+}
+
 /* ── Right column ─────────────────────────────────────────────────────── */
 #right-col {
   flex: 1;
@@ -275,6 +321,14 @@ button {
   min-height: 0;
 }
 #map { width: 100%; height: 100%; }
+
+/* Dim the OSM tile layer in dark mode so the coloured route stays readable */
+[data-theme="dark"] .leaflet-tile-pane { filter: brightness(0.7) saturate(0.6); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .leaflet-tile-pane {
+    filter: brightness(0.7) saturate(0.6);
+  }
+}
 
 /* ── Legend ───────────────────────────────────────────────────────────── */
 #legend {
@@ -634,7 +688,7 @@ button {
     border-top: 3px solid var(--border);
   }
 
-  #sidebar h1 { display: none; }
+  #header-row { display: none; }
 
   /* Smaller wind arrows on mobile so they don't cover the route colours */
   .wind-arrow-icon svg {

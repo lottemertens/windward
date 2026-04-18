@@ -7,7 +7,7 @@
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <link rel="stylesheet" href="/static/style.css?v=4" />
+  <link rel="stylesheet" href="/static/style.css?v=5" />
 </head>
 <body>
 
@@ -16,7 +16,10 @@
   <!-- ── Sidebar ──────────────────────────────────────────────────── -->
   <aside id="sidebar">
 
-    <h1>Windward</h1>
+    <div id="header-row">
+      <h1>Windward</h1>
+      <button id="dark-toggle" title="Toggle dark mode">☀</button>
+    </div>
 
     <!-- Departure time + wind overview -->
     <section class="card">
@@ -74,6 +77,7 @@
     <!-- Route summary — shown after calculation -->
     <section class="card hidden" id="summary-card">
       <p class="card-label">Wind breakdown</p>
+      <p id="wind-verdict"></p>
       <div id="summary-bar">
         <div id="summary-tailwind"></div>
         <div id="summary-cross"></div>
@@ -167,6 +171,6 @@
 
 </div><!-- /app -->
 
-<script src="/static/app.js?v=4"></script>
+<script src="/static/app.js?v=5"></script>
 </body>
 </html>
