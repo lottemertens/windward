@@ -40,11 +40,11 @@ DEFAULT_LOCATION_NAME = "Amsterdam"
 # snapshot. Optional — if no speed is given, static wind is used.
 #
 # SPEED_HEADWIND_FACTOR: m/s of speed lost per m/s of headwind.
-#   0.5 means a 10 m/s headwind costs 5 m/s (18 km/h) of effective speed.
+#   0.147 empirically calibrated from Garmin ride data (was 0.5).
 # MIN_SPEED_KMH: floor speed so the model never gives absurd values.
 
 DEFAULT_SPEED_KMH         = 20
-SPEED_HEADWIND_FACTOR     = 0.5
+SPEED_HEADWIND_FACTOR     = 0.147
 MIN_SPEED_KMH             = 8
 
 # --- Best departure time chart --------------------------------------------
