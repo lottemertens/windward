@@ -115,8 +115,8 @@ async def get_wind_along_route_timed(
     """
     if not waypoints:
         return [], 0
-    sampled, raw_forecasts = await _sample_and_fetch(waypoints, departure_at)
-    return _timed_wind_pass(sampled, raw_forecasts, departure_at, speed_kmh)
+    sampled, raw_forecasts, total_km = await _sample_and_fetch(waypoints, departure_at)
+    return _timed_wind_pass(sampled, raw_forecasts, departure_at, speed_kmh, total_km)
 
 
 async def score_departure_times(
@@ -136,13 +136,13 @@ async def score_departure_times(
     """
     if not waypoints:
         return [], []
-    sampled, raw_forecasts = await _sample_and_fetch(waypoints, departure_at)
+    sampled, raw_forecasts, total_km = await _sample_and_fetch(waypoints, departure_at)
     hours = range(DEPARTURE_SCORE_HOUR_START, DEPARTURE_SCORE_HOUR_END)
     results = []
     for hour in hours:
         dt = departure_at.replace(hour=hour, minute=0, second=0, microsecond=0)
         if speed_kmh:
-            wind_samples, _ = _timed_wind_pass(sampled, raw_forecasts, dt, speed_kmh)
+            wind_samples, _ = _timed_wind_pass(sampled, raw_forecasts, dt, speed_kmh, total_km)
         else:
             wind_samples = [_interpolate_at_time(f, dt) for f in raw_forecasts]
         results.append((hour, wind_samples))
@@ -154,19 +154,23 @@ async def score_departure_times(
 async def _sample_and_fetch(
     waypoints: list[Coordinate],
     departure_at: datetime,
-) -> tuple[list[Coordinate], list[dict]]:
+) -> tuple[list[Coordinate], list[dict], float]:
     """
     Evenly sample the route and fetch 48 h forecasts for each sample point.
     Shared by get_wind_along_route_timed and score_departure_times so the
     sampling + fetch logic lives in exactly one place.
+
+    Returns (sampled, raw_forecasts, total_distance_km) — the actual route
+    distance is returned so callers can correct the timed-pass duration, which
+    is otherwise based on straight-line distances between sample points.
     """
-    distance_km = route_distance_km(waypoints)
-    n    = int(distance_km / SAMPLE_SPACING_KM)
+    total_distance_km = route_distance_km(waypoints)
+    n    = int(total_distance_km / SAMPLE_SPACING_KM)
     n    = max(MIN_SAMPLES, min(MAX_SAMPLES, n))
     step = len(waypoints) / n
     sampled = [waypoints[int(i * step)] for i in range(n)]
     raw_forecasts = await _fetch_48h_parallel(sampled, departure_at)
-    return sampled, raw_forecasts
+    return sampled, raw_forecasts, total_distance_km
 
 
 async def _fetch_48h_parallel(
@@ -207,6 +211,7 @@ def _timed_wind_pass(
     raw_forecasts: list[dict],
     departure_at: datetime,
     speed_kmh: float,
+    total_distance_km: float = 0.0,
 ) -> tuple[list[WindSample], int]:
     """
     Walk sample points one by one.  At each point:
@@ -216,13 +221,18 @@ def _timed_wind_pass(
 
     This is pure Python — no I/O, runs in microseconds.
 
-    Returns (wind_samples, duration_min) where duration_min is the estimated
-    total riding time in minutes, accounting for headwind/tailwind speed changes.
+    The sample points are spaced by crow-fly distance, which is shorter than
+    the actual road distance.  When total_distance_km is provided, the raw
+    duration (based on straight-line sample distances) is scaled up so the
+    result reflects the full route length.
+
+    Returns (wind_samples, duration_min).
     """
     min_speed_ms = MIN_SPEED_KMH / 3.6
     speed_ms     = speed_kmh / 3.6
     current_time = departure_at
     results: list[WindSample] = []
+    sampled_km = 0.0
 
     for i, (point, forecast) in enumerate(zip(sampled, raw_forecasts)):
         wind = _interpolate_at_time(forecast, current_time)
@@ -232,6 +242,7 @@ def _timed_wind_pass(
             next_pt      = sampled[i + 1]
             segment_km   = haversine_km(point, next_pt)
             seg_bearing  = bearing(point, next_pt)
+            sampled_km  += segment_km
 
             # Wind → (u, v) components (u = eastward, v = northward)
             dir_rad = math.radians(wind.direction_deg)
@@ -248,7 +259,15 @@ def _timed_wind_pass(
             # Advance the clock
             current_time += timedelta(hours=segment_km / (v_eff_ms * 3.6))
 
-    duration_min = round((current_time - departure_at).total_seconds() / 60)
+    raw_duration_s = (current_time - departure_at).total_seconds()
+
+    # Scale duration from crow-fly sample distance to actual road distance.
+    # Without this, duration is systematically too short because sample points
+    # are connected by straight lines, not road geometry.
+    if sampled_km > 0 and total_distance_km > sampled_km:
+        raw_duration_s *= total_distance_km / sampled_km
+
+    duration_min = round(raw_duration_s / 60)
     return results, duration_min
 
 
