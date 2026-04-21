@@ -21,3 +21,4 @@ htmlcov/
 # Data cache
 data/*.json
 data/*.gpx
+data/*.fit
