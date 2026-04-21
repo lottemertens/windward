@@ -44,7 +44,7 @@ DEFAULT_LOCATION_NAME = "Amsterdam"
 # MIN_SPEED_KMH: floor speed so the model never gives absurd values.
 
 DEFAULT_SPEED_KMH         = 20
-SPEED_HEADWIND_FACTOR     = 0.5
+SPEED_HEADWIND_FACTOR     = 0.147
 MIN_SPEED_KMH             = 8
 
 # --- Best departure time chart --------------------------------------------
