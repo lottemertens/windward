@@ -1055,23 +1055,31 @@ function showElevationChart(elevations) {
     return;
   }
 
+  // Downsample to at most 200 points — visual detail beyond that is invisible
+  // and passing thousands of points to SVG can crash mobile browsers.
+  const MAX_PTS = 200;
+  const sampled = elevations.length > MAX_PTS
+    ? Array.from({ length: MAX_PTS }, (_, i) =>
+        elevations[Math.round(i * (elevations.length - 1) / (MAX_PTS - 1))])
+    : elevations;
+
   const W = elevationSvg.clientWidth  || 600;
   const H = elevationSvg.clientHeight || 60;
   const PAD_TOP = 4;   // px above the highest point
   const PAD_BOT = 16;  // px for the x-axis label area
 
-  const minE = Math.min(...elevations);
-  const maxE = Math.max(...elevations);
+  // Use reduce instead of spread to avoid stack overflow on large arrays
+  let minE = sampled[0], maxE = sampled[0];
+  for (const e of sampled) { if (e < minE) minE = e; if (e > maxE) maxE = e; }
   const range = maxE - minE || 1;
 
-  const xScale = (i) => (i / (elevations.length - 1)) * W;
+  const xScale = (i) => (i / (sampled.length - 1)) * W;
   const yScale = (e) => PAD_TOP + (1 - (e - minE) / range) * (H - PAD_TOP - PAD_BOT);
 
-  const pts = elevations.map((e, i) => `${xScale(i).toFixed(1)},${yScale(e).toFixed(1)}`).join(' ');
-  const first = `${xScale(0).toFixed(1)},${yScale(elevations[0]).toFixed(1)}`;
-  const last  = `${xScale(elevations.length - 1).toFixed(1)},${yScale(elevations[elevations.length - 1]).toFixed(1)}`;
+  const pts   = sampled.map((e, i) => `${xScale(i).toFixed(1)},${yScale(e).toFixed(1)}`).join(' ');
+  const baseL = `${xScale(0).toFixed(1)},${H}`;
+  const baseR = `${xScale(sampled.length - 1).toFixed(1)},${H}`;
 
-  // Colour: green (flat/downhill) → blue (climbing); we just use the accent colour
   elevationSvg.setAttribute('viewBox', `0 0 ${W} ${H}`);
   elevationSvg.innerHTML = `
     <defs>
@@ -1080,7 +1088,7 @@ function showElevationChart(elevations) {
         <stop offset="100%" stop-color="var(--accent)" stop-opacity="0.08"/>
       </linearGradient>
     </defs>
-    <polygon points="${first} ${pts} ${last} ${xScale(elevations.length-1).toFixed(1)},${H} ${xScale(0).toFixed(1)},${H}"
+    <polygon points="${baseL} ${pts} ${baseR}"
              fill="url(#elev-grad)" stroke="none"/>
     <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linejoin="round"/>
     <text x="2" y="${H - 2}" font-size="9" fill="var(--muted)">${Math.round(minE)} m</text>
