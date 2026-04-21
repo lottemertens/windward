@@ -110,7 +110,6 @@ function updateDarkToggleIcon() {
   const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
     || (!document.documentElement.hasAttribute('data-theme')
         && window.matchMedia('(prefers-color-scheme: dark)').matches);
-  darkToggleBtn.textContent = isDark ? '☀' : '🌙';
   darkToggleBtn.title = isDark ? 'Switch to light mode' : 'Switch to dark mode';
 }
 
@@ -1063,12 +1062,18 @@ function showElevationChart(elevations) {
         elevations[Math.round(i * (elevations.length - 1) / (MAX_PTS - 1))])
     : elevations;
 
+  // Reveal first so clientWidth/clientHeight return real layout dimensions.
+  // If we measure while hidden we get 0 and fall back to a fixed size that
+  // won't match the actual render — causing preserveAspectRatio="none" to
+  // scale axes non-uniformly and distort the text glyphs.
+  elevationStrip.classList.remove('hidden');
+
   const W = elevationSvg.clientWidth  || 600;
   const H = elevationSvg.clientHeight || 60;
   const PAD_TOP = 4;   // px above the highest point
-  const PAD_BOT = 16;  // px for the x-axis label area
+  const PAD_BOT = 16;  // px for the label area
 
-  // Use reduce instead of spread to avoid stack overflow on large arrays
+  // Use a loop instead of spread to avoid stack overflow on large arrays
   let minE = sampled[0], maxE = sampled[0];
   for (const e of sampled) { if (e < minE) minE = e; if (e > maxE) maxE = e; }
   const range = maxE - minE || 1;
@@ -1091,10 +1096,8 @@ function showElevationChart(elevations) {
     <polygon points="${baseL} ${pts} ${baseR}"
              fill="url(#elev-grad)" stroke="none"/>
     <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linejoin="round"/>
-    <text x="2" y="${H - 2}" font-size="9" fill="var(--muted)">${Math.round(minE)} m</text>
-    <text x="${W - 2}" y="${H - 2}" font-size="9" fill="var(--muted)" text-anchor="end">${Math.round(maxE)} m</text>`;
-
-  elevationStrip.classList.remove('hidden');
+    <text x="8" y="13" font-size="10" fill="var(--muted)">${Math.round(maxE)} m</text>
+    <text x="8" y="${H - 5}" font-size="10" fill="var(--muted)">${Math.round(minE)} m</text>`;
 }
 
 function clearElevationChart() {

@@ -8,7 +8,7 @@
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <link rel="stylesheet" href="/static/style.css?v=10" />
+  <link rel="stylesheet" href="/static/style.css?v=11" />
 </head>
 <body>
 
@@ -19,7 +19,11 @@
 
     <div id="header-row">
       <h1>Windward</h1>
-      <button id="dark-toggle" title="Toggle dark mode">☀</button>
+      <label id="dark-toggle" title="Toggle dark mode">
+        <span class="toggle-icon">☀</span>
+        <span class="toggle-track"><span class="toggle-knob"></span></span>
+        <span class="toggle-icon">🌙</span>
+      </label>
     </div>
 
     <!-- Departure time + wind overview -->
@@ -172,6 +176,6 @@
 
 </div><!-- /app -->
 
-<script src="/static/app.js?v=10"></script>
+<script src="/static/app.js?v=11"></script>
 </body>
 </html>
