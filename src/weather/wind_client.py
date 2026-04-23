@@ -22,6 +22,8 @@ from src.config import (
     OPEN_METEO_URL,
     OPEN_METEO_ARCHIVE_URL,
     OPEN_METEO_FORECAST_DAYS,
+    OPEN_METEO_MAX_RETRIES,
+    OPEN_METEO_RETRY_DELAY_S,
     SAMPLE_SPACING_KM,
     MIN_SAMPLES,
     MAX_SAMPLES,
@@ -31,6 +33,23 @@ from src.config import (
     DEPARTURE_SCORE_HOUR_START,
     DEPARTURE_SCORE_HOUR_END,
 )
+
+
+async def _fetch_json(client: httpx.AsyncClient, url: str, params: dict) -> dict:
+    """
+    GET url with params, retrying on 429 with exponential back-off.
+    Raises the last httpx.HTTPStatusError if all retries are exhausted.
+    """
+    delay = OPEN_METEO_RETRY_DELAY_S
+    for attempt in range(OPEN_METEO_MAX_RETRIES + 1):
+        response = await client.get(url, params=params, timeout=10.0)
+        if response.status_code != 429:
+            response.raise_for_status()
+            return response.json()
+        if attempt < OPEN_METEO_MAX_RETRIES:
+            await asyncio.sleep(delay)
+            delay *= 2
+    response.raise_for_status()  # raises after final 429
 
 
 async def get_wind_at(lat: float, lon: float, at: datetime) -> WindSample:
@@ -54,9 +73,7 @@ async def get_wind_at(lat: float, lon: float, at: datetime) -> WindSample:
     }
 
     async with httpx.AsyncClient() as client:
-        response = await client.get(url, params=params, timeout=10.0)
-        response.raise_for_status()
-        data = response.json()
+        data = await _fetch_json(client, url, params)
 
     return _parse_wind_response(data, at)
 
@@ -199,9 +216,7 @@ async def _fetch_48h_parallel(
         }
         async with semaphore:
             async with httpx.AsyncClient() as client:
-                r = await client.get(url, params=params, timeout=10.0)
-                r.raise_for_status()
-                return r.json()
+                return await _fetch_json(client, url, params)
 
     return list(await asyncio.gather(*[fetch_one(w) for w in sampled]))
 

@@ -25,6 +25,8 @@ ORS_AVOID_FEATURES       = ["steps", "ferries"]
 OPEN_METEO_URL         = "https://api.open-meteo.com/v1/forecast"
 OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"  # for past dates
 OPEN_METEO_FORECAST_DAYS = 16   # max days ahead the forecast API supports
+OPEN_METEO_MAX_RETRIES   = 3    # retry attempts on 429 Too Many Requests
+OPEN_METEO_RETRY_DELAY_S = 2.0  # initial back-off delay in seconds (doubles each attempt)
 
 # --- Default location for wind overview -----------------------------------
 # Shown in the sidebar before a route is planned.
