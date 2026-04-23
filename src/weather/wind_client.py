@@ -12,6 +12,7 @@ Archive API docs:  https://open-meteo.com/en/docs/historical-weather-api
 
 import asyncio
 import math
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 import httpx
@@ -34,18 +35,46 @@ from src.config import (
     DEPARTURE_SCORE_HOUR_END,
 )
 
+# ── Response cache ────────────────────────────────────────────────────────────
+# Keyed by (url, lat_2dp, lon_2dp, start_date, end_date).
+# Open-Meteo forecast data updates hourly, so a 1-hour TTL is safe.
+# This prevents redundant API calls when the same location/day is requested
+# multiple times (e.g. wind overview + departure-score chart on page load).
+_CACHE_TTL_S = 3600
+_response_cache: dict[tuple, tuple[float, dict]] = {}  # key → (expiry, data)
+
+
+def _cache_get(key: tuple) -> Optional[dict]:
+    entry = _response_cache.get(key)
+    if entry and time.monotonic() < entry[0]:
+        return entry[1]
+    return None
+
+
+def _cache_set(key: tuple, data: dict) -> None:
+    _response_cache[key] = (time.monotonic() + _CACHE_TTL_S, data)
+
 
 async def _fetch_json(client: httpx.AsyncClient, url: str, params: dict) -> dict:
     """
-    GET url with params, retrying on 429 with exponential back-off.
+    GET url with params, using a local TTL cache and retrying on 429
+    with exponential back-off.
     Raises the last httpx.HTTPStatusError if all retries are exhausted.
     """
+    cache_key = (url, params.get("latitude"), params.get("longitude"),
+                 params.get("start_date"), params.get("end_date"))
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     delay = OPEN_METEO_RETRY_DELAY_S
     for attempt in range(OPEN_METEO_MAX_RETRIES + 1):
         response = await client.get(url, params=params, timeout=10.0)
         if response.status_code != 429:
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            _cache_set(cache_key, data)
+            return data
         if attempt < OPEN_METEO_MAX_RETRIES:
             await asyncio.sleep(delay)
             delay *= 2
