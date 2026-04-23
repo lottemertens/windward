@@ -87,6 +87,16 @@ const GHOST_ROUTE_OPACITY    = 0.40;  // opacity of the old route during reroute
 const GHOST_ARROW_OPACITY    = 0.25;  // arrows are less important so fade them more
 const DEFAULT_SPEED          = 20;    // km/h — mirrors DEFAULT_SPEED_KMH in config.py
 
+// Open-Meteo — called directly from the browser so requests use the
+// visitor's IP instead of Render's shared server IP.
+const OPEN_METEO_FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
+const OPEN_METEO_ARCHIVE_URL  = 'https://archive-api.open-meteo.com/v1/archive';
+const ARCHIVE_LAG_DAYS        = 5;    // archive API lags ~5 days behind present
+const MAX_WIND_CONCURRENT     = 5;    // max parallel Open-Meteo requests — mirrors MAX_CONCURRENT_REQUESTS
+const OPEN_METEO_DEFAULT_LAT  = 52.37;
+const OPEN_METEO_DEFAULT_LON  = 4.89;
+const OPEN_METEO_DEFAULT_NAME = 'Amsterdam';
+
 function windColour(headwindMs) {
   const t = Math.max(-1, Math.min(1, headwindMs / HEADWIND_SCALE));
   if (t <= 0) return `rgb(${Math.round(255 * (t + 1))}, 200, 0)`;
@@ -139,23 +149,80 @@ async function apiError(res) {
 
 
 // ── Wind overview ─────────────────────────────────────────────────────
+// Fetches directly from Open-Meteo using the visitor's IP so Render's
+// server IP is never involved — avoiding shared-IP rate limits.
 async function fetchWindOverview() {
-  const datetime = datetimeInput.value + ':00';
   windLabel.innerHTML = 'Loading…';
   windDateNote.textContent = '';
 
-  if (new Date(datetimeInput.value) < new Date()) {
-    windDateNote.textContent = 'Showing historical wind data.';
-  }
+  const dateStr = datetimeInput.value.slice(0, 10);   // YYYY-MM-DD
+  const hour    = datetimeInput.value.slice(11, 13);  // HH
+
+  const at = new Date(datetimeInput.value);
+  if (at < new Date()) windDateNote.textContent = 'Showing historical wind data.';
 
   try {
-    const res  = await fetch(`/api/wind?datetime_iso=${encodeURIComponent(datetime)}`);
-    if (!res.ok) throw await apiError(res);
-    renderWindWidget(await res.json());
+    const url = _openMeteoUrl(dateStr);
+    const res = await fetch(
+      `${url}?latitude=${OPEN_METEO_DEFAULT_LAT}&longitude=${OPEN_METEO_DEFAULT_LON}` +
+      `&hourly=windspeed_10m,winddirection_10m&wind_speed_unit=ms` +
+      `&start_date=${dateStr}&end_date=${dateStr}&timezone=auto`
+    );
+    if (!res.ok) throw new Error(`Wind data unavailable (${res.status})`);
+    const data = await res.json();
+
+    const timeStr = `${dateStr}T${hour}:00`;
+    const idx     = data.hourly.time.indexOf(timeStr);
+    const i       = idx >= 0 ? idx : 0;
+    renderWindWidget({
+      speed_ms:      Math.round(data.hourly.windspeed_10m[i] * 10) / 10,
+      direction_deg: data.hourly.winddirection_10m[i],
+      location:      OPEN_METEO_DEFAULT_NAME,
+    });
   } catch (err) {
     windCompass.innerHTML = '';
     windLabel.textContent = err.message;
   }
+}
+
+// Pick the right Open-Meteo endpoint for a given date string (YYYY-MM-DD).
+function _openMeteoUrl(dateStr) {
+  const msPerDay  = 86400_000;
+  const daysAgo   = (Date.now() - new Date(dateStr).getTime()) / msPerDay;
+  return daysAgo > ARCHIVE_LAG_DAYS ? OPEN_METEO_ARCHIVE_URL : OPEN_METEO_FORECAST_URL;
+}
+
+// Fetch 48-h wind forecasts for an array of {lat, lon} sample points directly
+// from Open-Meteo. A semaphore limits to MAX_WIND_CONCURRENT parallel requests.
+async function fetchWindForPoints(samplePoints, dateStr) {
+  const endDate    = new Date(dateStr);
+  endDate.setDate(endDate.getDate() + 1);
+  const endDateStr = endDate.toISOString().slice(0, 10);
+  const url        = _openMeteoUrl(dateStr);
+
+  let running = 0;
+  const queue = [];
+  function _next() {
+    while (queue.length && running < MAX_WIND_CONCURRENT) {
+      running++;
+      const { resolve, reject, fn } = queue.shift();
+      fn().then(r => { running--; resolve(r); _next(); })
+          .catch(e => { running--; reject(e);  _next(); });
+    }
+  }
+  function withSemaphore(fn) {
+    return new Promise((resolve, reject) => { queue.push({ resolve, reject, fn }); _next(); });
+  }
+
+  return Promise.all(samplePoints.map(pt => withSemaphore(async () => {
+    const res = await fetch(
+      `${url}?latitude=${pt.lat}&longitude=${pt.lon}` +
+      `&hourly=windspeed_10m,winddirection_10m&wind_speed_unit=ms` +
+      `&start_date=${dateStr}&end_date=${endDateStr}&timezone=auto`
+    );
+    if (!res.ok) throw new Error(`Open-Meteo error ${res.status}`);
+    return res.json();
+  })));
 }
 
 function renderWindWidget(data) {
@@ -487,17 +554,37 @@ function updateUndoBtn() {
   reverseBtn.disabled = planPoints.length < 2;
 }
 
-// Fetch a route from the API. avoidGeometries is an optional array of
-// [[lat,lon],...] closure geometries to pass as avoid_polygons to ORS.
+// Step 1: fetch the ORS route. Returns coords + sample_points + metadata.
+// No wind data — that is fetched by the browser in step 2.
 async function _fetchRoute(avoidGeometries = []) {
   const res = await fetch('/api/route', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       waypoints:        planPoints.map(p => ({ lat: p.lat, lon: p.lng })),
-      datetime_iso:     datetimeInput.value + ':00',
       avoid_geometries: avoidGeometries,
-      speed_kmh:        speedInput.value ? parseFloat(speedInput.value) : null,
+    }),
+  });
+  if (!res.ok) throw await apiError(res);
+  return res.json();
+}
+
+// Step 2+3: browser fetches wind from Open-Meteo, then sends to /api/analyze.
+// Returns segments, wind_arrows, duration_min, departure_scores.
+async function _analyzeWind(routeData) {
+  const dateStr   = datetimeInput.value.slice(0, 10);
+  const forecasts = await fetchWindForPoints(routeData.sample_points, dateStr);
+
+  const res = await fetch('/api/analyze', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      waypoints:         routeData.coords.map(([lat, lon]) => ({ lat, lon })),
+      sample_points:     routeData.sample_points,
+      forecasts:         forecasts,
+      departure_at:      datetimeInput.value + ':00',
+      speed_kmh:         speedInput.value ? parseFloat(speedInput.value) : null,
+      total_distance_km: routeData.total_distance_km,
     }),
   });
   if (!res.ok) throw await apiError(res);
@@ -506,22 +593,36 @@ async function _fetchRoute(avoidGeometries = []) {
 
 async function calculateOrsRoute() {
   setLoading(true);
-  discardPreview();   // cancel any pending preview before a full recalculate
-  clearDepartureChart();  // clear stale scores immediately; fresh ones arrive after the route fetch
+  discardPreview();
+  clearDepartureChart();
 
   try {
-    const data = await _fetchRoute(avoidedClosures.map(c => c.geometry));
+    // Step 1: ORS routing (server) — no Open-Meteo
+    const routeData = await _fetchRoute(avoidedClosures.map(c => c.geometry));
 
-    // Only clear the old route once we know the new one succeeded —
-    // this way a failed API call leaves the existing route visible.
+    // Step 2+3: browser → Open-Meteo, then server analysis (pure maths)
+    const analysis = await _analyzeWind(routeData);
+
+    // Only clear the old route once both fetches succeed so a failure
+    // leaves the existing route visible.
     clearRoute();
-    drawRoute(data.segments);
-    drawWindArrows(data.wind_arrows);
-    showSummary(data.segments);
-    showRouteInfo(data.route_info);
+    drawRoute(analysis.segments);
+    drawWindArrows(analysis.wind_arrows);
+    showSummary(analysis.segments);
+    showRouteInfo({
+      distance_km:  routeData.distance_km,
+      elevations:   routeData.elevations,
+      surfaces:     routeData.surfaces,
+      warnings:     routeData.warnings,
+      duration_min: analysis.duration_min,
+    });
     exportBtn.classList.remove('hidden');
     mapsBtn.classList.remove('hidden');
-    fetchDepartureScores(planPoints.map(p => ({ lat: p.lat, lon: p.lng })));
+
+    if (analysis.departure_scores && analysis.departure_scores.length) {
+      departureCard.classList.remove('hidden');
+      renderDepartureChart(analysis.departure_scores);
+    }
 
   } catch (err) {
     statusDiv.textContent = `⚠ ${err.message}`;
@@ -540,21 +641,21 @@ async function avoidClosure(closure) {
   setLoading(true);
 
   try {
-    const data = await _fetchRoute(avoidedClosures.map(c => c.geometry));
+    const routeData = await _fetchRoute(avoidedClosures.map(c => c.geometry));
+    const analysis  = await _analyzeWind(routeData);
 
     // Fade the current route so the user can compare
     routeLayers.forEach(l => l.setStyle({ opacity: GHOST_ROUTE_OPACITY, weight: 5 }));
     arrowLayers.forEach(l => l.setOpacity(GHOST_ARROW_OPACITY));
 
-    // Draw proposed reroute on top
-    previewSegments = data.segments;
-    previewArrows   = data.wind_arrows;
-    previewLayers = _drawSegmentPolylines(data.segments, 0.9);
+    previewSegments = analysis.segments;
+    previewArrows   = analysis.wind_arrows;
+    previewLayers   = _drawSegmentPolylines(analysis.segments, 0.9);
 
     rerouteBar.classList.remove('hidden');
 
   } catch (err) {
-    avoidedClosures.pop();   // roll back since the request failed
+    avoidedClosures.pop();
     statusDiv.textContent = `⚠ Could not reroute: ${err.message}`;
   } finally {
     setLoading(false);
@@ -613,12 +714,13 @@ async function avoidAllClosures() {
 
   setLoading(true);
   try {
-    const data = await _fetchRoute(avoidedClosures.map(c => c.geometry));
+    const routeData = await _fetchRoute(avoidedClosures.map(c => c.geometry));
+    const analysis  = await _analyzeWind(routeData);
     routeLayers.forEach(l => l.setStyle({ opacity: GHOST_ROUTE_OPACITY, weight: 5 }));
     arrowLayers.forEach(l => l.setOpacity(GHOST_ARROW_OPACITY));
-    previewSegments = data.segments;
-    previewArrows   = data.wind_arrows;
-    previewLayers = _drawSegmentPolylines(data.segments, 0.9);
+    previewSegments = analysis.segments;
+    previewArrows   = analysis.wind_arrows;
+    previewLayers   = _drawSegmentPolylines(analysis.segments, 0.9);
     rerouteBar.classList.remove('hidden');
   } catch (err) {
     newToAvoid.forEach(() => avoidedClosures.pop());
@@ -663,6 +765,9 @@ gpxInput.addEventListener('change', () => {
   }
 });
 
+let uploadedSamplePoints   = null;
+let uploadedTotalDistanceKm = 0;
+
 uploadBtn.addEventListener('click', async () => {
   if (!gpxInput.files.length) return;
   setLoading(true);
@@ -676,11 +781,13 @@ uploadBtn.addEventListener('click', async () => {
     if (!res.ok) throw await apiError(res);
     const data = await res.json();
 
-    uploadedWaypoints = data.waypoints;
-    drawUploadedRoute(data.waypoints);
-    showRouteInfo(data.route_info);
+    uploadedWaypoints       = data.waypoints;
+    uploadedSamplePoints    = data.sample_points;
+    uploadedTotalDistanceKm = data.total_distance_km;
 
-    // Show the "Calculate wind" button now that we have a route
+    drawUploadedRoute(data.waypoints);
+    showRouteInfo({ distance_km: data.distance_km, elevations: [], surfaces: [], warnings: [] });
+
     windBtn.classList.remove('hidden');
     windBtn.disabled = false;
 
@@ -692,19 +799,25 @@ uploadBtn.addEventListener('click', async () => {
 });
 
 windBtn.addEventListener('click', async () => {
-  if (!uploadedWaypoints) return;
+  if (!uploadedWaypoints || !uploadedSamplePoints) return;
   setLoading(true);
   clearArrows();
   summaryCard.classList.add('hidden');
 
   try {
-    const res = await fetch('/api/wind-overlay', {
-      method: 'POST',
+    const dateStr   = datetimeInput.value.slice(0, 10);
+    const forecasts = await fetchWindForPoints(uploadedSamplePoints, dateStr);
+
+    const res = await fetch('/api/analyze', {
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        waypoints:    uploadedWaypoints,
-        datetime_iso: datetimeInput.value + ':00',
-        speed_kmh:    speedInput.value ? parseFloat(speedInput.value) : null,
+        waypoints:         uploadedWaypoints,
+        sample_points:     uploadedSamplePoints,
+        forecasts:         forecasts,
+        departure_at:      datetimeInput.value + ':00',
+        speed_kmh:         speedInput.value ? parseFloat(speedInput.value) : null,
+        total_distance_km: uploadedTotalDistanceKm,
       }),
     });
     if (!res.ok) throw await apiError(res);
@@ -716,7 +829,11 @@ windBtn.addEventListener('click', async () => {
     showArrival(data.duration_min);
     exportBtn.classList.remove('hidden');
     mapsBtn.classList.remove('hidden');
-    fetchDepartureScores(uploadedWaypoints);
+
+    if (data.departure_scores && data.departure_scores.length) {
+      departureCard.classList.remove('hidden');
+      renderDepartureChart(data.departure_scores);
+    }
 
   } catch (err) {
     statusDiv.textContent = `⚠ ${err.message}`;
@@ -1106,36 +1223,8 @@ function clearElevationChart() {
 }
 
 // ── Best departure time ───────────────────────────────────────────────
-// Fetches a wind score for every departure hour of the selected day and
-// renders a clickable bar chart. Clicking a bar sets the departure time
-// to that hour and recalculates the route wind.
-
-async function fetchDepartureScores(waypoints) {
-  if (!waypoints || waypoints.length < 2) return;
-  departureCard.classList.remove('hidden');
-  departureChart.innerHTML = '<span class="departure-loading">Loading…</span>';
-  departureHint.textContent = '';
-
-  // Capture the generation at call time; if a newer fetch starts before this
-  // one resolves, we discard the stale result instead of overwriting the chart.
-  const gen = ++departureScoreGeneration;
-
-  try {
-    const res = await fetch('/api/departure-scores', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        waypoints:    waypoints,
-        datetime_iso: datetimeInput.value + ':00',
-        speed_kmh:    speedInput.value ? parseFloat(speedInput.value) : null,
-      }),
-    });
-    if (!res.ok || gen !== departureScoreGeneration) return;
-    const scores = await res.json();
-    if (gen !== departureScoreGeneration) return;
-    renderDepartureChart(scores);
-  } catch { /* best-effort — don't break the main flow */ }
-}
+// Departure scores are now included in the /api/analyze response and
+// rendered immediately after the wind overlay — no separate fetch needed.
 
 function renderDepartureChart(scores) {
   if (!scores.length) return;

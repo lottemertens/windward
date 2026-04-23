@@ -195,6 +195,63 @@ async def score_departure_times(
     return sampled, results
 
 
+# ── Pure functions for client-supplied forecast data ─────────────────────────
+# The browser now fetches wind data directly from Open-Meteo and sends the
+# raw 48-h responses to the server. These functions run the same maths as
+# before but take pre-fetched forecast dicts instead of making HTTP calls.
+
+def sample_route(waypoints: list[Coordinate]) -> tuple[list[Coordinate], float]:
+    """
+    Subsample a route for wind fetch points.
+    Returns (sampled_waypoints, total_distance_km).
+    Mirrors the sampling done inside _sample_and_fetch.
+    """
+    total_km = route_distance_km(waypoints)
+    n = int(total_km / SAMPLE_SPACING_KM)
+    n = max(MIN_SAMPLES, min(MAX_SAMPLES, n))
+    step = len(waypoints) / n
+    sampled = [waypoints[int(i * step)] for i in range(n)]
+    return sampled, total_km
+
+
+def interpolate_wind_at_time(forecast: dict, at: datetime) -> WindSample:
+    """Extract a WindSample from a pre-fetched 48-h Open-Meteo response dict."""
+    return _interpolate_at_time(forecast, at)
+
+
+def timed_wind_from_forecasts(
+    sampled: list[Coordinate],
+    raw_forecasts: list[dict],
+    departure_at: datetime,
+    speed_kmh: float,
+    total_distance_km: float = 0.0,
+) -> tuple[list[WindSample], int]:
+    """Run the timed-wind pass over pre-fetched forecast data. No I/O."""
+    return _timed_wind_pass(sampled, raw_forecasts, departure_at, speed_kmh, total_distance_km)
+
+
+def departure_scores_from_forecasts(
+    sampled: list[Coordinate],
+    raw_forecasts: list[dict],
+    departure_at: datetime,
+    speed_kmh: Optional[float],
+    total_distance_km: float,
+) -> list[tuple[int, list[WindSample]]]:
+    """
+    Compute per-hour wind samples from pre-fetched forecast data. No I/O.
+    Returns [(hour, wind_samples), ...] for hours in DEPARTURE_SCORE_HOUR_START..END.
+    """
+    results = []
+    for hour in range(DEPARTURE_SCORE_HOUR_START, DEPARTURE_SCORE_HOUR_END):
+        dt = departure_at.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if speed_kmh:
+            wind_samples, _ = _timed_wind_pass(sampled, raw_forecasts, dt, speed_kmh, total_distance_km)
+        else:
+            wind_samples = [_interpolate_at_time(f, dt) for f in raw_forecasts]
+        results.append((hour, wind_samples))
+    return results
+
+
 # ── Helpers for time-dependent wind ──────────────────────────────────────────
 
 async def _sample_and_fetch(
