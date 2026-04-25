@@ -37,7 +37,7 @@ The app is then available at http://localhost:8000. FastAPI also auto-generates 
 WindWard/
 ├── src/
 │   ├── routing/       # ORS client: fetch a cycling route from A to B
-│   ├── weather/       # Open-Meteo client: fetch wind data at coordinates
+│   ├── weather/       # Open-Meteo helpers: sample route, interpolate pre-fetched forecasts
 │   └── analysis/      # Pure maths: compute headwind/tailwind per segment
 ├── app/
 │   ├── main.py        # FastAPI app — API endpoints + serves static files
@@ -50,25 +50,32 @@ WindWard/
 ### Key design principles
 - Each `src/` module has one responsibility and does not import from other `src/` modules (except `analysis/`, which uses the data types from `routing/` and `weather/`).
 - `src/analysis/` is pure Python with no HTTP calls — making it trivial to test.
-- `app/main.py` is the only place that wires modules together and calls the API.
-- Frontend (`app/static/`) talks to the backend only via `POST /api/route`.
+- `app/main.py` is the only place that wires modules together.
 - **All constants live in `src/config.py`** (Python) or the constants section at the top of `app/static/app.js` (frontend). Never define magic numbers or configuration values inline — not in module files, not buried in functions, not in the middle of a class. API URLs, tuning parameters, thresholds, buffer sizes — all go in the appropriate config location.
 
 ### Data flow
 ```
 User searches address or clicks map (app.js)
-  → POST /api/route  (app/main.py)
-    → src/routing: ORS API  → list of Coordinates
-    → src/weather: Open-Meteo API → list of WindSamples (max 5 concurrent requests)
-    → src/analysis: pure maths → list of SegmentWind
-  → JSON response
-    → Leaflet draws coloured route (app.js)
+
+Step 1 — ORS routing (server):
+  app.js → POST /api/route
+    → src/routing: ORS API → list of Coordinates + sample_points
+  → returns coords, sample_points, distance, surfaces, elevations
+
+Step 2 — Wind fetch (browser):
+  app.js → Open-Meteo API directly (visitor's IP, max 5 concurrent)
+  → returns raw 48-h forecast per sample point
+
+Step 3 — Wind analysis (server):
+  app.js → POST /api/analyze (forecasts + full route coords)
+    → src/weather: pure functions interpolate wind at each point/time
+    → src/analysis: pure maths → SegmentWind list + display arrows + departure scores
+  → Leaflet draws coloured route + arrows
 ```
 
 ### External APIs
-- **OpenRouteService (ORS)**: free tier, requires API key in `.env` as `ORS_API_KEY`. Supports `cycling-road` (avoids unpaved, default) and `cycling-regular` profiles. Coordinates are `[lon, lat]` order (GeoJSON convention) — internal code uses `(lat, lon)` and flips before calling. Profile is sent from the frontend and validated in `app/main.py`.
-- **Open-Meteo**: no auth required. Returns hourly wind speed (m/s) and direction (degrees, 0 = north clockwise) per grid cell (~9 km resolution, ECMWF model). Past dates use the archive endpoint automatically. Concurrent requests are capped at `MAX_CONCURRENT_REQUESTS` (5) via `asyncio.Semaphore` to avoid 429 errors.
-- **Nominatim** (OpenStreetMap geocoder): no auth required. Address search restricted to the Netherlands (`countrycodes=nl`). Proxied through `/api/geocode` so the correct `User-Agent` header can be set. Frontend debounces input at 350ms before querying.
+- **OpenRouteService (ORS)**: free tier, requires API key in `.env` as `ORS_API_KEY`. Uses `cycling-regular` profile (hardcoded in `src/config.py`). Coordinates are `[lon, lat]` order (GeoJSON convention) — internal code uses `(lat, lon)` and flips before calling. Also used for address geocoding via `/api/geocode` (proxied to add the API key).
+- **Open-Meteo**: no auth required. Returns hourly wind speed (m/s) and direction (degrees, 0 = north clockwise) per grid cell (~9 km resolution, ECMWF model). Past dates use the archive endpoint automatically. **Called directly from the visitor's browser** — not from the server — so requests use the visitor's IP, avoiding shared-IP rate limits on Render. Concurrent requests are capped at `MAX_WIND_CONCURRENT` (5) via a JS semaphore in `fetchWindForPoints()`.
 
 ### Frontend
 Static HTML + Leaflet.js served directly by FastAPI (`app/static/`). No build step, no npm. Leaflet is loaded from a CDN.

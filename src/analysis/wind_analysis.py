@@ -20,6 +20,57 @@ from src.geo import haversine_km, bearing, route_distance_km
 from src.config import ARROW_SPACING_KM, MIN_ARROWS, MAX_ARROWS
 
 
+def analyse_route_wind_and_arrows(
+    waypoints: list[Coordinate],
+    wind_samples: list[WindSample],
+) -> tuple[list[SegmentWind], list[WindSample]]:
+    """
+    Compute both wind segments and display arrows in a single pass.
+
+    Builds cumulative distances and the UV interpolation table only once,
+    then uses them for both outputs. Prefer this over calling
+    analyse_route_wind() and generate_display_arrows() separately.
+
+    Returns (segments, arrows).
+    """
+    if len(waypoints) < 2 or not wind_samples:
+        return [], []
+
+    cumulative              = _cumulative_distances(waypoints)
+    total_km                = cumulative[-1]
+    sample_positions, us, vs = _build_uv_table(wind_samples, waypoints, cumulative, total_km)
+
+    # ── Segments ─────────────────────────────────────────────────────────────
+    segments: list[SegmentWind] = []
+    for i in range(len(waypoints) - 1):
+        start = waypoints[i]
+        end   = waypoints[i + 1]
+        mid_t = ((cumulative[i] + cumulative[i + 1]) / 2) / total_km if total_km > 0 else 0.0
+        u, v  = _interpolate_uv(mid_t, sample_positions, us, vs)
+        segments.append(SegmentWind(
+            start=start, end=end,
+            headwind_ms=_headwind_component(u, v, bearing(start, end)),
+        ))
+
+    # ── Display arrows ────────────────────────────────────────────────────────
+    n = int(total_km / ARROW_SPACING_KM)
+    n = max(MIN_ARROWS, min(MAX_ARROWS, n))
+    arrows: list[WindSample] = []
+    for i in range(n):
+        t         = i / (n - 1) if n > 1 else 0.0
+        target_km = t * total_km
+        wp_idx    = min(range(len(cumulative)), key=lambda j: abs(cumulative[j] - target_km))
+        u, v      = _interpolate_uv(t, sample_positions, us, vs)
+        speed     = math.sqrt(u ** 2 + v ** 2)
+        direction = (math.degrees(math.atan2(u, v)) + 360) % 360
+        arrows.append(WindSample(
+            lat=waypoints[wp_idx].lat, lon=waypoints[wp_idx].lon,
+            speed_ms=speed, direction_deg=direction,
+        ))
+
+    return segments, arrows
+
+
 def analyse_route_wind(
     waypoints: list[Coordinate],
     wind_samples: list[WindSample],
