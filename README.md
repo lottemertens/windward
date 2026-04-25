@@ -13,7 +13,6 @@ A wind-aware cycling route planner for the Netherlands. Plan a route on the map 
 - **Smart via point insertion** — new points slot into the nearest segment automatically
 - **Drag waypoints** to reposition them; the route recalculates automatically
 - **Undo** the last-added point, or click a via marker to remove it
-- **Road / regular bike toggle** — road bike profile avoids unpaved surfaces (default)
 - **Upload a GPX** file from Strava, Komoot, or Garmin and overlay wind on your existing route
 - **Wind colour scale** — green = tailwind, yellow = crosswind, red = headwind (±5 m/s)
 - **Wind arrows** on the map showing direction and strength
@@ -68,8 +67,7 @@ Interactive API docs are available at [http://localhost:8000/docs](http://localh
 3. Add **via points** (blue 1, 2, …) by searching or clicking — inserted into the nearest segment
 4. **Drag** any marker to reposition it; the route recalculates on release
 5. Click a via marker to **remove** it, or use **Undo** to reverse the last action
-6. Switch between **Road bike** and **Regular bike** to change which surfaces ORS will use
-7. Change the departure time and hit **Calculate route + wind** to update wind conditions
+6. Change the departure time and hit **Calculate route + wind** to update wind conditions
 
 ### Upload tab
 1. Choose a `.gpx` file exported from Strava, Komoot, Garmin, or similar
@@ -87,9 +85,9 @@ After any route is calculated, **Download GPX** appears in the summary card. The
 |-----|---------|------|
 | [OpenRouteService](https://openrouteservice.org/) | Cycling route geometry, surface types, warnings | API key in `.env` |
 | [Open-Meteo](https://open-meteo.com/) | Wind speed and direction (forecast + historical archive) | None required |
-| [Nominatim](https://nominatim.openstreetmap.org/) | Address search (Netherlands only) | None required |
+| [ORS Geocoder](https://openrouteservice.org/dev/#/api-docs/geocode) | Address search (Netherlands only) | API key in `.env` |
 
-Wind data uses the ECMWF model at ~9 km grid resolution. Forecasts are available up to 16 days ahead; past dates automatically switch to the archive endpoint. Open-Meteo requests are rate-limited to 5 concurrent calls to avoid 429 errors.
+Wind data uses the ECMWF model at ~9 km grid resolution. Forecasts are available up to 16 days ahead; past dates automatically switch to the archive endpoint. Open-Meteo is called directly from the visitor's browser (not the server), which distributes requests across user IPs and avoids rate limiting. Concurrent requests are capped at 5.
 
 ---
 

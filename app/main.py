@@ -35,7 +35,7 @@ from src.weather.wind_client import (
     timed_wind_from_forecasts,
     departure_scores_from_forecasts,
 )
-from src.analysis.wind_analysis import analyse_route_wind, generate_display_arrows
+from src.analysis.wind_analysis import analyse_route_wind_and_arrows, analyse_route_wind
 from src.gpx_parser import parse_gpx
 from src.geo import route_distance_km
 from src.models import Coordinate
@@ -210,8 +210,7 @@ async def analyze_wind(request: AnalyzeRequest):
         wind_samples = [interpolate_wind_at_time(f, at) for f in request.forecasts]
         duration_min = None
 
-    segments       = analyse_route_wind(waypoints, wind_samples)
-    display_arrows = generate_display_arrows(waypoints, wind_samples)
+    segments, display_arrows = analyse_route_wind_and_arrows(waypoints, wind_samples)
 
     # Departure scores (pure Python, same forecasts — no extra API calls)
     hourly = departure_scores_from_forecasts(

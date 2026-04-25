@@ -70,7 +70,7 @@ let lastRouteSegments = [];     // stored after each calculation, used for GPX e
 let avoidedClosures      = [];
 let previewLayers        = [];
 let previewSegments      = [];
-let departureScoreGeneration = 0;  // incremented on each fetch; stale responses are discarded
+let departureScoreGeneration = 0;  // unused since departure scores moved into /api/analyze response
 let previewArrows    = [];
 let allClosuresCache = null;
 
