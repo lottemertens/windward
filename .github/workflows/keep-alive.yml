@@ -1,0 +1,21 @@
+# Prevent the Render free-tier app from spinning down due to inactivity.
+#
+# How it works:
+#   GitHub's scheduler sends a GET request to the app every 10 minutes.
+#   This resets Render's 15-minute inactivity timer, keeping the app awake.
+#   No secrets beyond RENDER_APP_URL are needed.
+
+name: Keep Render app alive
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'  # every 10 minutes, around the clock
+  workflow_dispatch:          # also lets you trigger it manually from the GitHub UI
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping app
+        run: |
+          curl --fail --silent --show-error "${{ secrets.RENDER_APP_URL }}/"
